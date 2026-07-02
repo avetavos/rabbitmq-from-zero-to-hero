@@ -1,0 +1,154 @@
+---
+title: 'Publisher Confirms'
+description: 'จะรู้ได้อย่างไรว่า broker รับ message ของคุณจริง — publisher confirm, mandatory flag สำหรับ message ที่ route ไม่ได้ และ trade-off ด้าน throughput'
+sidebar:
+  order: 2
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## publish ธรรมดาคือ fire-and-forget จริง ๆ
+
+มีความจริงที่น่าอึดอัดเกี่ยวกับ `publish` พื้นฐาน: โดย default มันไม่ return อะไรกลับมา client เขียน message ลง socket แล้วไปต่อ ถ้า broker โหลดหนัก, connection หลุดตอนนั้นพอดี หรือ message ถูก reject — **คุณจะไม่มีวันรู้** message หายไปเฉย ๆ แต่ code คิดว่าสำเร็จ
+
+สำหรับ analytics event สัก event อาจไม่เป็นไร แต่สำหรับ "ลูกค้าจ่ายเงินให้เราแล้ว" มันรับไม่ได้เลย **publisher confirm** ปิดช่องโหว่นี้
+
+## Publisher confirm: broker ack การ publish ของคุณ
+
+เมื่อคุณตั้ง channel เป็น **confirm mode** broker จะส่ง acknowledgement กลับมาสำหรับทุก message เมื่อมันรับผิดชอบ message นั้นแล้ว (route ไปยัง durable queue ที่ match ทั้งหมด และ — สำหรับ persistent message — เขียนลง disk แล้ว) คุณจะได้ `ack` (broker มีแล้ว) หรือในกรณีที่หายากคือ `nack` (broker รับไม่ได้)
+
+<Mermaid title="publish ที่เปิด confirm" code={confirmDiagram} />
+
+export const confirmDiagram = `sequenceDiagram
+  participant P as Publisher
+  participant B as Broker
+  P->>B: publish (confirm mode)
+  B->>B: route + persist
+  B-->>P: ack (I have it)
+  Note over P: safe to consider it sent
+  P->>B: publish (bad case)
+  B-->>P: nack (could not accept)
+  Note over P: retry or alert`;
+
+confirm เป็นแบบ **asynchronous**: broker ทยอยส่ง ack กลับมาระหว่างที่ process message ดังนั้นคุณไม่ต้อง block หลังทุก publish publisher ที่ throughput สูงจะเก็บ window ของ message ที่ยังไม่ confirm ไว้ในระหว่างทาง และถือว่า message durable ก็ต่อเมื่อ ack ของมันมาถึงแล้วเท่านั้น
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    // amqplib: a confirm channel gives per-message callbacks
+    const channel = await conn.createConfirmChannel();
+
+    channel.publish('orders', 'order.created', Buffer.from(body), { persistent: true },
+      (err) => {
+        if (err) console.error('NACK — message not confirmed, retry:', err);
+        else console.log('ACK — broker has the message');
+      });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    # pika: enable confirms; publish raises/returns on failure
+    channel.confirm_delivery()
+
+    try:
+        channel.basic_publish(
+            exchange="orders", routing_key="order.created", body=body,
+            properties=pika.BasicProperties(delivery_mode=2),  # persistent
+            mandatory=True,
+        )
+        print("ACK — broker has the message")
+    except pika.exceptions.UnroutableError:
+        print("returned — no queue matched")
+    except pika.exceptions.NackError:
+        print("NACK — broker could not accept, retry")
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    ch.Confirm(false) // put channel in confirm mode
+    confirms := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
+
+    ch.PublishWithContext(ctx, "orders", "order.created", true, false, amqp.Publishing{
+        DeliveryMode: amqp.Persistent,
+        Body:         body,
+    })
+
+    if c := <-confirms; c.Ack {
+        log.Println("ACK — broker has the message")
+    } else {
+        log.Println("NACK — broker could not accept, retry")
+    }
+    ```
+  </TabItem>
+</Tabs>
+
+## Mandatory flag: จับ message ที่ route ไม่ได้
+
+confirm บอกว่า *broker* ได้ message แล้ว — แต่ message ที่ route ไป **ศูนย์** queue ก็ยังถือว่า broker จัดการสำเร็จ มันแค่หายไปเฉย ๆ ถ้าคุณ publish `order.created` แต่ไม่มี queue ไหน bind ไว้สำหรับมัน (พิมพ์ผิด หรือลืม binding) message ก็ถูก drop และคุณจะไม่มีวันรู้
+
+**mandatory** flag แก้เรื่องนี้: ถ้า mandatory message route ไปไม่เจอ queue ไหนเลย broker จะ **return** มันกลับไปหา publisher แทนที่จะ drop ทิ้ง ฟัง returned message แล้วคุณจะจับ misrouting ได้ทันที
+
+รวมกันแล้ว confirm + mandatory ตอบทั้งสองคำถาม: *broker รับไหม?* และ *มันถึง queue จริงไหม?*
+
+## Trade-off: ความปลอดภัยแลกมาด้วย throughput
+
+confirm ไม่ฟรี การรอ ack หลังทุก publish จะทำให้ publisher ทำงานแบบ serial และ throughput ตกฮวบ ทางสายกลางที่ดี:
+
+- **Async confirm พร้อม window** — เก็บ N message ไว้ในระหว่างทาง จัดการ ack ตอนมันทยอยกลับมา throughput เกือบเต็ม ปลอดภัยเต็ม
+- **Batch confirm** — publish เป็น batch แล้วรอทั้ง batch confirm ง่ายกว่า throughput ต่ำลงนิดหน่อย
+- **Publish-and-wait ต่อ message** — เข้าใจง่ายสุด ช้าสุด ใช้เฉพาะ publish ที่ critical และ volume ต่ำ
+
+<Callout title="สรุปหนึ่งบรรทัด">
+publish ธรรมดาทำ message หายแบบเงียบ ๆ — broker ไม่เคยบอกว่ามาถึง **publisher confirm** ทำให้ broker ack แต่ละ message เมื่อรับผิดชอบแล้ว และ **mandatory** flag return message ที่ไม่ match queue ไหนกลับมา ใช้ async confirm พร้อม in-flight window เพื่อรักษา throughput ให้สูงโดยไม่ทำ critical publish หาย
+</Callout>
+
+export const quizConfirms = [
+  {
+    q: 'เกิดอะไรขึ้นกับ publish ธรรมดา (ไม่มี confirm) ถ้า broker รับไม่สำเร็จ?',
+    options: [
+      'client retry อัตโนมัติ',
+      'คุณไม่รู้เลยแบบเงียบ ๆ — message หายแต่ code คิดว่าสำเร็จ',
+      'publish จะ throw ทุกครั้ง',
+      'message ถูก queue ไว้ที่ local ตลอดไป',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'publisher confirm บอกอะไรคุณ?',
+    options: [
+      'ว่า consumer process message แล้ว',
+      'ว่า broker รับผิดชอบ message แล้ว (route และถ้า persistent ก็เขียนลง disk แล้ว)',
+      'ว่า message ถูก compress แล้ว',
+      'ว่า queue ว่างแล้ว',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'mandatory flag เพิ่มอะไรจาก confirm?',
+    options: [
+      'มัน encrypt message',
+      'มัน return message กลับไปหา publisher ถ้า route ไปไม่เจอ queue ไหนเลย',
+      'มันบังคับให้ message เป็น persistent',
+      'มันการันตี exactly-once delivery',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไมไม่รอ confirm หลังทุก publish ไปเลย?',
+    options: [
+      'AMQP ไม่อนุญาต',
+      'มันทำให้ publisher ทำงานแบบ serial และ throughput ตกหนัก — async confirm พร้อม window ดีกว่า',
+      'confirm ทำงานได้แค่แบบ batch',
+      'มันจะทำให้ mandatory flag หายไป',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="reliability/publisher-confirms" questions={quizConfirms} />
+
+<ProgressTracker client:visible id="reliability/publisher-confirms" />

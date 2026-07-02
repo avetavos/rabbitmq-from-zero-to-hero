@@ -1,0 +1,118 @@
+---
+title: 'Core Concepts'
+description: 'Connections vs channels, exchanges, queues, bindings, routing keys, and the journey of a single message from producer to consumer.'
+sidebar:
+  order: 4
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Connections and channels
+
+A client talks to RabbitMQ over a single long-lived **TCP connection**. But opening a TCP connection is expensive, and a busy app needs to do many things at once — publish from one place, consume in another, several threads working in parallel.
+
+The answer is **channels**. A channel is a lightweight virtual connection *multiplexed over* one TCP connection. You open **one connection per process** and **many channels over it** — typically one channel per thread or per concurrent task.
+
+<Mermaid title="One connection, many channels" code={channelDiagram} />
+
+export const channelDiagram = `flowchart LR
+  app["Application"] --> conn["1 TCP Connection"]
+  conn --> ch1["Channel 1\n(publisher)"]
+  conn --> ch2["Channel 2\n(consumer)"]
+  conn --> ch3["Channel 3\n(consumer)"]
+  ch1 --> broker["RabbitMQ"]
+  ch2 --> broker
+  ch3 --> broker`;
+
+The rule of thumb: **connections are long-lived and few; channels are cheap and many.** A common mistake is opening a connection per operation — that exhausts the broker. Another is sharing one channel across threads — channels are not thread-safe. One connection per app, one channel per worker.
+
+## Exchanges, queues, and bindings
+
+You met these last lesson; here is the precise version:
+
+- An **exchange** receives every published message and, using its type and its bindings, decides which queues get it. It stores nothing.
+- A **queue** is an ordered buffer that *holds* messages until a consumer takes them. This is the only thing that stores messages.
+- A **binding** connects an exchange to a queue. It may carry a **binding key** that, combined with the message's **routing key**, determines whether a message matches.
+
+The routing key is just a string label the producer puts on each message (like `order.created` or `payment.failed`). Whether it matters depends on the exchange type — a fanout exchange ignores it entirely, a topic exchange pattern-matches on it. That's the whole Exchanges & Routing module.
+
+## The journey of one message
+
+Put it together and trace a single message end to end:
+
+<Mermaid title="A message from publish to acknowledgement" code={journeyDiagram} />
+
+export const journeyDiagram = `sequenceDiagram
+  participant P as Producer
+  participant X as Exchange
+  participant Q as Queue
+  participant C as Consumer
+  P->>X: publish(routing key, body)
+  X->>Q: route by binding
+  Note over Q: message waits here
+  Q->>C: deliver
+  C->>C: process
+  C->>Q: ack (I'm done)
+  Note over Q: message removed`;
+
+1. The producer **publishes** a message with a routing key to an exchange.
+2. The exchange **routes** it to matching queues (zero, one, or many).
+3. The message **waits** in the queue until a consumer is ready.
+4. The queue **delivers** it to a consumer.
+5. The consumer processes it and sends an **acknowledgement** — only then does the queue delete it.
+
+That last step is the safety net: until the consumer acks, RabbitMQ assumes the work isn't done. If the consumer crashes mid-task, the un-acked message is redelivered. (An entire later lesson is devoted to acknowledgements — they are how "at-least-once" delivery works.)
+
+<Callout title="The one-line takeaway">
+Open **one connection per process** and **many cheap channels** over it (channels aren't thread-safe — one per worker). A message's life is: producer publishes to an **exchange** → routed by **bindings** to a **queue** → delivered to a **consumer** → deleted only after the consumer **acknowledges** it. Only queues store messages; exchanges just route.
+</Callout>
+
+export const quizConcepts = [
+  {
+    q: 'What is a channel in RabbitMQ?',
+    options: [
+      'A separate TCP connection for each message',
+      'A lightweight virtual connection multiplexed over one TCP connection',
+      'A type of exchange',
+      'The acknowledgement protocol',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is the recommended connection/channel usage?',
+    options: [
+      'One connection per operation, shared channel across all threads',
+      'One long-lived connection per process, with many channels — typically one per worker',
+      'A new connection and channel for every published message',
+      'One channel shared by every thread, since channels are thread-safe',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Which component actually stores messages?',
+    options: [
+      'The exchange',
+      'The binding',
+      'The queue',
+      'The channel',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'When is a message finally removed from a queue?',
+    options: [
+      'The instant it is delivered to a consumer',
+      'After the consumer acknowledges it',
+      'When the producer publishes the next message',
+      'After a fixed 30-second timer',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="messaging-foundations/core-concepts" questions={quizConcepts} />
+
+<ProgressTracker client:visible id="messaging-foundations/core-concepts" />

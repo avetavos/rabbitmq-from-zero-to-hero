@@ -1,0 +1,105 @@
+---
+title: 'Delivery Guarantees'
+description: 'At-most-once, at-least-once, and why "exactly-once" delivery is a myth — plus how idempotent consumers give you effectively-once processing.'
+sidebar:
+  order: 4
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Three guarantees, one real choice
+
+Every messaging system offers some delivery guarantee. There are three you'll hear about:
+
+| Guarantee | Meaning | You risk |
+|-----------|---------|----------|
+| **At-most-once** | Each message delivered zero or one time | **Loss** — a message can vanish |
+| **At-least-once** | Each message delivered one or more times | **Duplicates** — a message can repeat |
+| **Exactly-once** | Each message delivered precisely once | (the dream) |
+
+The uncomfortable truth: in a distributed system with networks and crashes, **exactly-once *delivery* is not achievable.** It's a myth. So the real design choice is between at-most-once and at-least-once — you're picking which failure you can tolerate: losing a message, or seeing it twice.
+
+## Why "exactly-once" is a myth
+
+Picture the moment a consumer finishes work. It must do two things: process the message, and acknowledge it. A crash can happen *between* them, and there's no way to make both atomic across the network:
+
+<Mermaid title="The unavoidable gap where a duplicate is born" code={dupDiagram} />
+
+export const dupDiagram = `sequenceDiagram
+  participant Q as Queue
+  participant C as Consumer
+  Q->>C: deliver message
+  C->>C: process (do the work)
+  Note over C: crash HERE, before ack
+  Note over Q: no ack arrived → redeliver
+  Q->>C: deliver AGAIN (duplicate)`;
+
+If the consumer crashes *after* doing the work but *before* the ack lands, RabbitMQ (correctly, safely) assumes the work never happened and redelivers. The work runs twice. No amount of broker cleverness removes this window — the process and the ack are simply not one atomic step.
+
+That's why at-least-once is the honest, safe default: RabbitMQ would rather deliver twice than risk losing your message. Choose at-most-once (auto-ack, no persistence) only when the occasional lost message genuinely doesn't matter — metrics, live dashboards, ephemeral events.
+
+## Effectively-once: at-least-once + idempotency
+
+Here's the good news: you don't actually need exactly-once *delivery*. You need exactly-once **effect**. And you get that by making the **consumer idempotent** — processing the same message twice produces the same result as processing it once.
+
+Practical ways to be idempotent:
+
+- **Idempotency key.** Give each message a stable unique id (an `message_id`, or a business key like `order_id`). Before acting, record "I've handled id X" in a database (a unique constraint, an upsert, a `SETNX`). A duplicate finds the key already present and does nothing.
+- **Naturally idempotent operations.** "Set status = shipped" is safe to run twice; "increment balance by 10" is not. Prefer set/upsert over blind increments where you can.
+- **Deduplicate on write.** Use a database unique constraint on the business key so a duplicate insert simply fails harmlessly.
+
+Combine RabbitMQ's at-least-once delivery with an idempotent consumer and you get **effectively-once processing** — the message might arrive twice, but it only ever *takes effect* once. That is the correct, achievable target.
+
+<Callout title="The one-line takeaway">
+Exactly-once *delivery* is a myth — the gap between doing work and acking it can always produce a duplicate after a crash. So RabbitMQ gives you **at-least-once**, and you make the **consumer idempotent** (idempotency keys, set/upsert operations, unique constraints) so a duplicate is harmless. At-least-once + idempotency = **effectively-once**, which is what you actually want.
+</Callout>
+
+export const quizGuarantees = [
+  {
+    q: 'Which delivery guarantee does RabbitMQ favour by default, and what is its risk?',
+    options: [
+      'At-most-once — risk of duplicates',
+      'At-least-once — risk of duplicates',
+      'Exactly-once — no risk',
+      'At-most-once — risk of loss',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why is exactly-once delivery considered a myth?',
+    options: [
+      'RabbitMQ has a bug',
+      'A consumer can crash between doing the work and sending the ack, so a redelivery (duplicate) is unavoidable',
+      'Networks are always reliable',
+      'Because messages cannot be numbered',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is "effectively-once" processing?',
+    options: [
+      'Delivering each message exactly once at the network level',
+      'At-least-once delivery plus an idempotent consumer, so a duplicate takes effect only once',
+      'Turning off acknowledgements',
+      'Publishing each message only once',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Which is the most naturally idempotent operation?',
+    options: [
+      'Increment the account balance by 10',
+      'Append a row to a log with no key',
+      'Set the order status to "shipped"',
+      'Send an email',
+    ],
+    answer: 2,
+  },
+];
+
+<Quiz client:visible id="reliability/delivery-guarantees" questions={quizGuarantees} />
+
+<ProgressTracker client:visible id="reliability/delivery-guarantees" />

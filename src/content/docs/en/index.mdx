@@ -1,0 +1,60 @@
+---
+title: RabbitMQ — From Zero to Hero
+description: Design reliable asynchronous systems with RabbitMQ from first principles — the AMQP model, exchanges & routing, queues & acknowledgements, publisher confirms & dead-letter exchanges, work queues & RPC, clustering & quorum queues, and RabbitMQ vs Kafka — with Node, Python, and Go examples.
+template: splash
+hero:
+  tagline: A standalone, beginner→advanced course on designing async systems with RabbitMQ. From the AMQP model and exchange routing to acknowledgements, publisher confirms, dead-letter exchanges, work queues, RPC, quorum queues, and scaling — every topic with the why, the trade-offs, and Node, Python, and Go examples side by side.
+  actions:
+    - text: Start here
+      link: /rabbitmq/en/messaging-foundations/
+      icon: right-arrow
+      variant: primary
+    - text: Jump to Exchanges & Routing
+      link: /rabbitmq/en/exchanges-and-routing/
+      icon: open-book
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## What you'll learn
+
+<CardGrid>
+  <Card title="Messaging Foundations" icon="rocket">
+    Why async messaging, what RabbitMQ and AMQP are, the core concepts, and your first publish/consume. [Start →](/rabbitmq/en/messaging-foundations/)
+  </Card>
+  <Card title="Exchanges & Routing" icon="random">
+    Direct, fanout, topic, and headers exchanges — how a message finds its queues. [Route →](/rabbitmq/en/exchanges-and-routing/)
+  </Card>
+  <Card title="Queues & Messages" icon="seti:config">
+    Queue and message properties, acknowledgements, prefetch/QoS, and TTL & limits. [Tune →](/rabbitmq/en/queues-and-messages/)
+  </Card>
+  <Card title="Reliability & Delivery" icon="approve-check">
+    Publisher confirms, dead-letter exchanges, delivery guarantees, and durability. [Harden →](/rabbitmq/en/reliability/)
+  </Card>
+  <Card title="Consumer Patterns" icon="seti:plan">
+    Work queues, publish/subscribe, RPC over RabbitMQ, and retry with backoff. [Apply →](/rabbitmq/en/consumer-patterns/)
+  </Card>
+  <Card title="Operations & Scaling" icon="seti:db">
+    Clustering & quorum queues, connections & channels, monitoring, and flow control. [Scale →](/rabbitmq/en/operations-and-scaling/)
+  </Card>
+  <Card title="Patterns & Alternatives" icon="puzzle">
+    Messaging patterns, RabbitMQ vs Kafka, Streams, and a production-grade consumer. [Extend →](/rabbitmq/en/patterns-and-alternatives/)
+  </Card>
+</CardGrid>
+
+## How this course works
+
+<CardGrid>
+  <Card title="The model first, then the code" icon="rocket">
+    Every lesson starts from the AMQP model — producers, exchanges, bindings, queues, consumers — so the code is obvious once you can see how a message flows.
+  </Card>
+  <Card title="Three languages side by side" icon="seti:config">
+    Producer and consumer examples in Node (amqplib), Python (pika), and Go (amqp091) through synced tabs — pick your language once and follow it everywhere.
+  </Card>
+  <Card title="Design, not just syntax" icon="approve-check">
+    Every topic covers the why and the trade-offs — when to ack manually, how to guarantee delivery, how to handle poison messages, and when a queue is the wrong tool.
+  </Card>
+  <Card title="Diagrams that explain" icon="puzzle">
+    Exchange routing, acknowledgement flow, dead-letter retry, and RPC correlation as theme-aware Mermaid diagrams. Bilingual (English / ไทย) with saved quiz progress.
+  </Card>
+</CardGrid>

@@ -1,0 +1,106 @@
+---
+title: 'Messaging Patterns'
+description: 'A consolidated tour of the core patterns — work queue, publish/subscribe, routing, RPC, and event-driven choreography — and a guide to choosing between them.'
+sidebar:
+  order: 2
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Five shapes, one broker
+
+Across this course you have met the building blocks. Here they are as named patterns you can reach for by name, each mapped to the exchange type that implements it.
+
+### Work queue (competing consumers)
+
+One queue, many workers. Each message goes to exactly **one** worker, and the broker load-balances across them. This is the pattern for **distributing tasks** — resize this image, send this email, process this payment — where you scale throughput by adding workers.
+
+### Publish/subscribe
+
+One event, many **independent** subscribers, each with its own queue via a fanout exchange. Every subscriber gets its **own copy**. Use it to broadcast an event to systems that must each react — email, analytics, cache invalidation — without any of them knowing about the others.
+
+### Routing / topics
+
+Selective delivery. A direct or topic exchange sends a message only to the queues whose binding matches the routing key. Use it when different consumers care about **different subsets** of events — `order.*.created` here, `payment.failed.#` there.
+
+### RPC (request/reply)
+
+Rebuilding synchronous call-and-wait on top of messaging, using `correlation_id` and `reply_to`. Occasionally useful, but usually a sign you actually wanted a real RPC/HTTP call — reach for it sparingly.
+
+### Event-driven choreography
+
+The architectural pattern above the others: services emit **events** ("OrderPlaced") and other services **react**, with no central orchestrator telling them what to do. RabbitMQ is the nervous system carrying those events.
+
+<Mermaid title="Choreography — one event, many independent reactions" code={choreoDiagram} />
+
+export const choreoDiagram = `flowchart LR
+  order["Order service"] -->|"OrderPlaced"| x["events exchange"]
+  x --> q1["payment queue"] --> s1["Payment service"]
+  x --> q2["inventory queue"] --> s2["Inventory service"]
+  x --> q3["email queue"] --> s3["Notification service"]`;
+
+A note on **sagas**: when a business process spans several services (place order → charge → reserve stock → ship), choreography strings it together as a chain of events, and each step publishes the next. If a step fails, compensating events undo the earlier ones. RabbitMQ carries the events; the saga logic lives in your services.
+
+## Choosing a pattern
+
+| You want to… | Pattern | Exchange type |
+|--------------|---------|---------------|
+| Spread tasks across workers | Work queue | direct / default |
+| Broadcast an event to all reactors | Publish/subscribe | fanout |
+| Deliver only to interested consumers | Routing | direct / topic |
+| Get a reply to a request | RPC | direct (+ reply queue) |
+| Let services react to events with no orchestrator | Choreography | topic / fanout |
+
+<Callout title="The one-line takeaway">
+Learn the patterns by name: **work queue** spreads tasks across competing workers (fanout of load), **pub/sub** gives every subscriber its own copy, **routing/topics** delivers selectively, **RPC** fakes request/reply, and **choreography** lets services react to events with no central orchestrator. Pick the pattern first; the exchange type follows from it.
+</Callout>
+
+export const quizPatterns = [
+  {
+    q: 'In a work queue, how many workers process each individual message?',
+    options: [
+      'Every worker gets a copy',
+      'Exactly one worker — the broker load-balances across them',
+      'None until the producer acks',
+      'A random half of the workers',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What distinguishes publish/subscribe from a work queue?',
+    options: [
+      'Pub/sub gives every subscriber its own copy; a work queue gives each message to one worker',
+      'Pub/sub only works with Kafka',
+      'A work queue cannot use acknowledgements',
+      'They are the same pattern with different names',
+    ],
+    answer: 0,
+  },
+  {
+    q: 'What is event-driven choreography?',
+    options: [
+      'A central orchestrator commands each service in turn',
+      'Services emit events and others react, with no central controller',
+      'A way to compress messages',
+      'A replacement for acknowledgements',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Which pattern should make you pause and ask "did I actually want a normal RPC/HTTP call?"',
+    options: [
+      'Work queue',
+      'Publish/subscribe',
+      'RPC over RabbitMQ',
+      'Routing',
+    ],
+    answer: 2,
+  },
+];
+
+<Quiz client:visible id="patterns-and-alternatives/messaging-patterns" questions={quizPatterns} />
+
+<ProgressTracker client:visible id="patterns-and-alternatives/messaging-patterns" />

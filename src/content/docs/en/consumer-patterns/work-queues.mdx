@@ -1,0 +1,148 @@
+---
+title: 'Work Queues'
+description: 'Distribute tasks across many competing workers on one queue — round-robin delivery, prefetch for fair dispatch, and acks that make a crashed worker safe.'
+sidebar:
+  order: 2
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The most common pattern
+
+A **work queue** (also called a *task queue* or *competing consumers*) is the workhorse of RabbitMQ. One producer publishes tasks — resize this image, send this email, generate this report — and a pool of **workers** shares the load. Each task goes to exactly one worker.
+
+This is how background jobs scale. Too much work? Start more workers on the same queue. They compete for messages, and RabbitMQ hands each message to one of them.
+
+<Mermaid title="One queue, many competing workers" code={wqDiagram} />
+
+export const wqDiagram = `flowchart LR
+  p["Producer\n(publishes tasks)"] --> q["Queue: tasks"]
+  q --> w1["Worker 1"]
+  q --> w2["Worker 2"]
+  q --> w3["Worker 3"]`;
+
+## Round-robin, and its flaw
+
+By default RabbitMQ dispatches messages **round-robin**: worker 1, worker 2, worker 3, worker 1, and so on — without looking at how busy each worker is. That's fine when every task takes the same time. But if worker 1 gets a stream of slow tasks and worker 2 gets fast ones, round-robin still feeds them evenly, and worker 1 falls behind while worker 2 sits idle.
+
+The fix is **prefetch** (`basic.qos`): tell RabbitMQ "don't give a worker a new message until it has acked the last one." With a prefetch of 1, a worker only ever holds one unacked task, so a slow worker simply pulls its next task later — busy workers naturally get less. This turns round-robin into **fair dispatch**.
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    const channel = await conn.createChannel();
+    await channel.assertQueue('tasks', { durable: true });
+
+    // Fair dispatch: at most one unacked message per worker.
+    await channel.prefetch(1);
+
+    channel.consume('tasks', async (msg) => {
+      if (!msg) return;
+      await doWork(msg.content.toString()); // process the task
+      channel.ack(msg);                     // only now ask for the next
+    }, { noAck: false });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    channel = conn.channel()
+    channel.queue_declare(queue="tasks", durable=True)
+
+    # Fair dispatch: at most one unacked message per worker.
+    channel.basic_qos(prefetch_count=1)
+
+    def on_task(ch, method, properties, body):
+        do_work(body.decode())                       # process the task
+        ch.basic_ack(delivery_tag=method.delivery_tag)  # ask for the next
+
+    channel.basic_consume(queue="tasks", on_message_callback=on_task)
+    channel.start_consuming()
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    ch, _ := conn.Channel()
+    ch.QueueDeclare("tasks", true, false, false, false, nil)
+
+    // Fair dispatch: at most one unacked message per worker.
+    ch.Qos(1, 0, false)
+
+    msgs, _ := ch.Consume("tasks", "", false, false, false, false, nil)
+    for d := range msgs {
+        doWork(string(d.Body)) // process the task
+        d.Ack(false)           // only now ask for the next
+    }
+    ```
+  </TabItem>
+</Tabs>
+
+## Acks make a crashed worker safe
+
+Notice `noAck: false` / manual ack above. This is the second half of a reliable work queue. Because the worker acks **only after** the task finishes, a worker that crashes mid-task never acked — so RabbitMQ redelivers that task to another worker. Nothing is silently lost.
+
+Pair that with a **durable queue** and **persistent messages** (from the reliability module) and your task queue survives both a worker crash *and* a broker restart.
+
+## Tuning prefetch
+
+Prefetch of 1 is the safest and gives the fairest dispatch, but it adds a round-trip per message. For fast, uniform tasks a higher prefetch (say 10–50) keeps workers fed and throughput high. The trade-off:
+
+| Prefetch | Effect |
+|----------|--------|
+| **1** | Fairest dispatch, lowest throughput, safest for slow/uneven tasks |
+| **Moderate (10–50)** | Good throughput for fast tasks; some unfairness |
+| **Unlimited (0)** | Max throughput but one worker can hoard the backlog and others starve |
+
+<Callout title="The one-line takeaway">
+A work queue shares tasks across competing workers on one queue — scale by adding workers. Set **prefetch** to get fair dispatch instead of blind round-robin (start at 1, raise it for fast uniform tasks), and **ack only after processing** so a crashed worker's task is redelivered rather than lost.
+</Callout>
+
+export const quizWq = [
+  {
+    q: 'What does a work queue give you?',
+    options: [
+      'A copy of each message to every worker',
+      'Task distribution — each message goes to exactly one of many competing workers',
+      'Guaranteed message ordering across workers',
+      'Automatic encryption of tasks',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why set prefetch (basic.qos) to a low value?',
+    options: [
+      'To compress messages',
+      'So RabbitMQ won\'t pile unacked messages on a busy worker — enabling fair dispatch',
+      'To make messages durable',
+      'To route by header',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'A worker crashes after receiving a task but before acking. What happens?',
+    options: [
+      'The task is lost',
+      'The task is redelivered to another worker, because it was never acked',
+      'The producer is notified to resend',
+      'The queue is deleted',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is the downside of an unlimited prefetch?',
+    options: [
+      'Messages become unroutable',
+      'One worker can hoard the whole backlog while others starve',
+      'The queue stops being durable',
+      'Acks stop working',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="consumer-patterns/work-queues" questions={quizWq} />
+
+<ProgressTracker client:visible id="consumer-patterns/work-queues" />

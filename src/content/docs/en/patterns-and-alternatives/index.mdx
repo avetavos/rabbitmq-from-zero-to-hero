@@ -1,0 +1,79 @@
+---
+title: 'Patterns & Alternatives'
+description: 'The core messaging patterns in one place, how RabbitMQ compares to Kafka, RabbitMQ Streams, and a capstone design for a resilient production consumer.'
+sidebar:
+  order: 1
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## From features to judgement
+
+You now know the machinery — exchanges, queues, acknowledgements, confirms, dead-letter exchanges. This final module is about **judgement**: which pattern fits which problem, when RabbitMQ is the wrong tool, and how to assemble everything you've learned into a consumer you can trust in production.
+
+## What this module covers
+
+| Lesson | What you'll learn |
+|--------|-------------------|
+| Messaging patterns | Work queues, pub/sub, routing, RPC, and event-driven choreography — and when to use each |
+| RabbitMQ vs Kafka | Queue semantics versus a replayable log, and how to choose |
+| RabbitMQ Streams | An append-only, replayable log built into RabbitMQ |
+| Designing a resilient consumer | A production-grade consumer that ties every reliability lesson together |
+
+## The map of what you've built toward
+
+Every pattern in this course is a different shape of the same publish-route-consume flow:
+
+<Mermaid title="The patterns are all shapes of one flow" code={mapDiagram} />
+
+export const mapDiagram = `flowchart TB
+  ev["An event or task"] --> q1["Work queue\n(one worker of many does it)"]
+  ev --> q2["Pub/sub\n(every subscriber gets a copy)"]
+  ev --> q3["Routing/topic\n(only matching consumers)"]
+  ev --> q4["RPC\n(request, wait for reply)"]`;
+
+The skill is not memorising each one — it is recognising, when a new requirement lands on your desk, which shape it is. That recognition is what the rest of this module builds.
+
+<Callout title="The mental shift">
+Early lessons asked "how does RabbitMQ work?" This module asks "**should** I use RabbitMQ here, and if so, in what shape?" A senior engineer's value is less in wiring an exchange and more in knowing that this problem wants a work queue, that one wants a replayable log, and this other one shouldn't touch a broker at all.
+</Callout>
+
+export const quizIndex = [
+  {
+    q: 'What is this final module mainly about?',
+    options: [
+      'Re-teaching the AMQP wire protocol',
+      'Judgement — which pattern fits which problem, and when RabbitMQ is the wrong tool',
+      'Configuring TLS certificates',
+      'Writing the RabbitMQ server itself',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What do work queues, pub/sub, routing, and RPC have in common?',
+    options: [
+      'They are all different shapes of the same publish-route-consume flow',
+      'They all require Kafka',
+      'They all disable acknowledgements',
+      'They can only be used one at a time in a system',
+    ],
+    answer: 0,
+  },
+  {
+    q: 'Where does a senior engineer add the most value with messaging?',
+    options: [
+      'Typing the exchange-declaration code fastest',
+      'Recognising which pattern (or alternative) a new requirement actually needs',
+      'Memorising every client library method',
+      'Avoiding diagrams',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="patterns-and-alternatives/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="patterns-and-alternatives/index" />

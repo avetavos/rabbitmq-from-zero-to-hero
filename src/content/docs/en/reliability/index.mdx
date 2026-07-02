@@ -1,0 +1,85 @@
+---
+title: 'Reliability & Delivery'
+description: 'The two halves of reliable messaging — getting a message safely from publisher to broker, and from broker to consumer — plus confirms, dead-lettering, guarantees, and durability.'
+sidebar:
+  order: 1
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Reliability is a chain, not a switch
+
+"Don't lose my messages" sounds like one feature. It is actually a **chain of independent links**, and a message is only as safe as the weakest one. A message can be lost:
+
+- Between the **publisher and the broker** — the publish never arrived, or arrived at an exchange that routed it nowhere.
+- Inside the **broker** — the broker restarted and the message wasn't written to disk.
+- Between the **broker and the consumer** — the consumer took the message, crashed mid-work, and it was already deleted.
+
+Turning on one safeguard and assuming you're covered is the classic mistake. Real reliability means closing **every** gap in the chain.
+
+<Mermaid title="Every link in the delivery chain can lose a message" code={chainDiagram} />
+
+export const chainDiagram = `flowchart LR
+  p["Publisher"] -->|"gap 1:\npublisher confirms"| x["Exchange"]
+  x -->|"gap 2:\nmandatory + durable"| q["Queue"]
+  q -->|"gap 3:\npersistence"| disk["Disk"]
+  q -->|"gap 4:\nmanual ack"| c["Consumer"]`;
+
+## What this module covers
+
+| Lesson | The gap it closes |
+|--------|-------------------|
+| Publisher confirms | Publisher → broker: know the broker actually accepted your message |
+| Dead-letter exchanges | Handle messages that can't be processed instead of losing or looping them |
+| Delivery guarantees | Understand at-most-once, at-least-once, and the "exactly-once" myth |
+| Durability & persistence | Survive a broker restart — durable queues *and* persistent messages |
+
+## The recurring theme: at-least-once
+
+RabbitMQ's whole reliability model points at one guarantee: **at-least-once delivery**. Every safeguard — confirms, acks, persistence — exists to make sure a message is delivered *at least* once, even across crashes and restarts.
+
+The price of "at least once" is that you may occasionally get a message **more than** once (a redelivery after a crash). So the other half of reliable design lives in *your* code: making consumers **idempotent** so a duplicate does no harm. Reliability is a partnership — RabbitMQ won't drop your message, and you make sure processing it twice is safe.
+
+<Callout title="The one-line takeaway">
+Reliable messaging is a chain with four links — publisher→broker, routing, on-disk survival, and broker→consumer — and a message is only as safe as the weakest one. RabbitMQ's tools give you **at-least-once** delivery; you close the loop by making consumers **idempotent** so the occasional duplicate is harmless.
+</Callout>
+
+export const quizIndex = [
+  {
+    q: 'Why is reliability described as a chain rather than a single switch?',
+    options: [
+      'Because RabbitMQ only has one reliability setting',
+      'Because a message can be lost at several independent points, and it is only as safe as the weakest link',
+      'Because reliability requires a blockchain',
+      'Because messages are chained together on disk',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What delivery guarantee does RabbitMQ\'s reliability model aim for?',
+    options: [
+      'At-most-once',
+      'At-least-once',
+      'Exactly-once, guaranteed by the broker alone',
+      'No guarantee at all',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is the developer\'s half of the reliability partnership?',
+    options: [
+      'Disabling acknowledgements for speed',
+      'Making consumers idempotent so an occasional duplicate is harmless',
+      'Never restarting the broker',
+      'Publishing every message twice on purpose',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="reliability/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="reliability/index" />

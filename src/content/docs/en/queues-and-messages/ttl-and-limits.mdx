@@ -1,0 +1,140 @@
+---
+title: 'TTL & Limits'
+description: 'Message and queue TTL, max-length caps, overflow behaviour, and how TTL combined with a dead-letter exchange gives you delayed retry.'
+sidebar:
+  order: 6
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Queues can't grow forever
+
+If producers outpace consumers, a queue grows without bound until it eats the broker's memory or disk — and then everything grinds to a halt. TTL and length limits are the guardrails that put a ceiling on that growth and let you decide *what to drop* instead of falling over.
+
+## TTL — messages that expire
+
+**TTL** (time-to-live) makes messages expire after a set number of milliseconds. There are two ways to set it:
+
+- **Per-queue** (`x-message-ttl`) — every message in the queue expires after N ms.
+- **Per-message** (`expiration` property) — this specific message expires after N ms.
+
+When a message expires it's removed from the queue. Crucially, if the queue has a dead-letter exchange, the expired message is **dead-lettered** rather than silently dropped — which is the whole basis of the delayed-retry trick below.
+
+**Queue TTL** (`x-expires`) is different: it deletes the *entire queue* after it has gone unused (no consumers, no gets) for N ms. Handy for cleaning up temporary queues.
+
+## Length limits — cap the backlog
+
+**`x-max-length`** caps the number of messages (or `x-max-length-bytes` the total size). When the queue is full and a new message arrives, the **overflow behaviour** decides what gives:
+
+- **`drop-head`** (default) — drop the oldest message to make room for the new one.
+- **`reject-publish`** — reject the new message (the publisher can be told, via publisher confirms).
+
+Choosing between them is a real decision: drop-head favours fresh data (good for live metrics), reject-publish favours not losing anything and pushing back on the producer (good for work you must not drop).
+
+## Declaring a queue with TTL and a length cap
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    await channel.assertQueue('events', {
+      durable: true,
+      arguments: {
+        'x-message-ttl': 60000,        // messages expire after 60s
+        'x-max-length': 10000,         // keep at most 10k messages
+        'x-overflow': 'reject-publish', // reject new ones when full
+      },
+    });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    channel.queue_declare(
+        queue="events",
+        durable=True,
+        arguments={
+            "x-message-ttl": 60000,          # messages expire after 60s
+            "x-max-length": 10000,           # keep at most 10k messages
+            "x-overflow": "reject-publish",  # reject new ones when full
+        },
+    )
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    args := amqp.Table{
+        "x-message-ttl": int32(60000),        // messages expire after 60s
+        "x-max-length":  int32(10000),        // keep at most 10k messages
+        "x-overflow":    "reject-publish",    // reject new ones when full
+    }
+    ch.QueueDeclare("events", true, false, false, false, args)
+    ```
+  </TabItem>
+</Tabs>
+
+## The trick: TTL + DLX = delayed retry
+
+Here's why TTL matters beyond garbage collection. Put a TTL on a queue with **no consumer**, and point its dead-letter exchange back at your main queue. A message sent there sits for the TTL, expires, and gets dead-lettered *back into the main flow* — a **delay** with no scheduler.
+
+<Mermaid title="A retry queue: TTL expiry dead-letters back to the main queue" code={retryDiagram} />
+
+export const retryDiagram = `flowchart LR
+  main["main queue"] -->|"failed, send to retry"| retry["retry queue\n(TTL 30s, no consumer)"]
+  retry -->|"TTL expires → dead-letter"| main
+  main --> worker["consumer"]`;
+
+This is the standard RabbitMQ way to do retry-with-backoff, and the Reliability and Consumer Patterns modules build directly on it.
+
+<Callout title="The one-line takeaway">
+TTL and length limits stop a queue from growing until it takes down the broker. Message TTL expires individual messages; `x-max-length` caps the backlog, with `x-overflow` choosing whether to drop the oldest (`drop-head`) or reject new publishes (`reject-publish`). And TTL isn't just cleanup: a TTL queue with a dead-letter exchange pointing back to the main queue is how you build delayed retry without a scheduler.
+</Callout>
+
+export const quizTtl = [
+  {
+    q: 'What happens to a message when its TTL expires, if the queue has a dead-letter exchange?',
+    options: [
+      'It is silently deleted',
+      'It is dead-lettered to the configured exchange rather than dropped',
+      'It is sent back to the producer',
+      'It is retried immediately in place',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What does x-max-length with the default drop-head overflow do when the queue is full?',
+    options: [
+      'Rejects the new message',
+      'Drops the oldest message to make room for the new one',
+      'Deletes the entire queue',
+      'Pauses all consumers',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'You must not lose any messages and want to push back on producers when the queue is full. Which overflow mode?',
+    options: [
+      'drop-head',
+      'reject-publish',
+      'x-expires',
+      'auto-delete',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'How do you build delayed retry-with-backoff in RabbitMQ using TTL?',
+    options: [
+      'Set a high prefetch value',
+      'Put messages in a consumer-less TTL queue whose dead-letter exchange routes them back to the main queue after the TTL',
+      'Use auto-ack',
+      'Increase x-max-length',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="queues-and-messages/ttl-and-limits" questions={quizTtl} />
+
+<ProgressTracker client:visible id="queues-and-messages/ttl-and-limits" />

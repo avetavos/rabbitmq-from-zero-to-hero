@@ -1,0 +1,139 @@
+---
+title: 'Message Properties'
+description: 'An AMQP message is a body plus properties — persistence, content type, headers, priority, correlation — and knowing which ones matter for reliability.'
+sidebar:
+  order: 3
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## A message is more than its body
+
+When you publish, the body — the actual bytes — is only half the story. Every AMQP message also carries a set of **properties**: metadata that RabbitMQ and your consumers can act on without parsing the body. Some are just informational; a couple genuinely change delivery behaviour.
+
+## The property that changes behaviour: `delivery_mode`
+
+The one property that affects reliability is **`delivery_mode`** (also called "persistent"):
+
+- `delivery_mode = 2` (**persistent**) — RabbitMQ writes the message to disk, so it can survive a broker restart.
+- `delivery_mode = 1` (**transient**, the default in raw AMQP) — the message lives in memory and is lost on restart.
+
+Pair this with a durable queue (last lesson). The rule is worth memorising: **durable queue + persistent message = survives a restart.** Miss either half and the data is at risk.
+
+Persistence isn't free — writing to disk costs throughput. That's a real trade-off you'll weigh in the reliability module.
+
+## The informational properties
+
+The rest describe the message so consumers (and tooling) can handle it correctly:
+
+| Property | Purpose |
+|----------|---------|
+| `content_type` | e.g. `application/json` — how to interpret the body |
+| `content_encoding` | e.g. `gzip` |
+| `headers` | Arbitrary key/value metadata (also used by the headers exchange) |
+| `correlation_id` | Match a reply to its request (the RPC pattern) |
+| `reply_to` | The queue a reply should be sent to |
+| `message_id` | A unique id — handy for idempotency and deduplication |
+| `timestamp` | When the message was created |
+| `priority` | Higher-priority messages jump the queue (needs a priority queue) |
+| `expiration` | Per-message TTL in milliseconds |
+
+## Publishing with properties
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    channel.publish('orders', 'order.created', Buffer.from(JSON.stringify(order)), {
+      persistent: true,          // delivery_mode = 2
+      contentType: 'application/json',
+      messageId: order.id,
+      timestamp: Date.now(),
+      headers: { source: 'checkout' },
+    });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    channel.basic_publish(
+        exchange="orders",
+        routing_key="order.created",
+        body=json.dumps(order),
+        properties=pika.BasicProperties(
+            delivery_mode=2,               # persistent
+            content_type="application/json",
+            message_id=order["id"],
+            headers={"source": "checkout"},
+        ),
+    )
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    ch.PublishWithContext(ctx, "orders", "order.created", false, false,
+        amqp.Publishing{
+            DeliveryMode: amqp.Persistent, // delivery_mode = 2
+            ContentType:  "application/json",
+            MessageId:    order.ID,
+            Timestamp:    time.Now(),
+            Headers:      amqp.Table{"source": "checkout"},
+            Body:         body,
+        },
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+<Callout title="The one-line takeaway">
+A message carries a body plus properties. Most properties are informational (`content_type`, `message_id`, `headers`, `correlation_id`), but **`delivery_mode`/persistent** is the one that matters for reliability: combined with a durable queue, it's what lets a message survive a broker restart — at the cost of a disk write on every publish.
+</Callout>
+
+export const quizMsg = [
+  {
+    q: 'Which message property actually affects whether a message survives a broker restart?',
+    options: [
+      'content_type',
+      'delivery_mode (persistent)',
+      'message_id',
+      'timestamp',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What combination is required for a message to survive a restart?',
+    options: [
+      'A persistent message alone',
+      'A durable queue alone',
+      'A durable queue AND a persistent message',
+      'A priority queue',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'What is the cost of publishing persistent messages?',
+    options: [
+      'Nothing — it is always free',
+      'Reduced throughput, because messages are written to disk',
+      'Messages become larger on the wire',
+      'Consumers must decode them differently',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Which property pair is used to correlate a reply with its request in the RPC pattern?',
+    options: [
+      'content_type and content_encoding',
+      'correlation_id and reply_to',
+      'priority and expiration',
+      'timestamp and message_id',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="queues-and-messages/message-properties" questions={quizMsg} />
+
+<ProgressTracker client:visible id="queues-and-messages/message-properties" />

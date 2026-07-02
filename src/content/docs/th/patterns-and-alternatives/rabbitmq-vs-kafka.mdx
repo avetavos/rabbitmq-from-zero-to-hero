@@ -1,0 +1,104 @@
+---
+title: 'RabbitMQ vs Kafka'
+description: 'queue semantics เทียบกับ log ที่ replay ได้ — โมเดล smart-broker/dumb-consumer เทียบกับ dumb-broker/smart-consumer — และจะเลือกอย่างไร'
+sidebar:
+  order: 3
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## สองปรัชญาที่ต่างกัน
+
+RabbitMQ และ Kafka ต่างก็ย้าย message ระหว่าง service แต่มันสร้างบนแนวคิดที่ตรงข้ามกัน และความต่างนี้เป็นตัวตัดสินว่าคุณควรใช้ตัวไหน
+
+- **RabbitMQ คือ smart broker กับ dumb consumer** broker ทำงานหนัก — routing, ติดตามว่าใคร ack อะไรไปแล้ว, redeliver ตัวที่ล้มเหลว message ถูก deliver, ถูก acknowledge แล้วก็ถูก **ลบทิ้ง** consumer แค่ process แล้ว ack
+- **Kafka คือ dumb broker กับ smart consumer** broker เป็น **log** แบบ append-only โดยพื้นฐาน: มันเขียน message ลง disk และเก็บไว้ มันไม่ทำ routing และไม่ลืมอะไรตอน consume consumer แต่ละตัวติดตามตำแหน่งของตัวเอง (**offset**) และย้อนกลับไปอ่านซ้ำได้
+
+ความต่างข้อเดียวนั้น — *ลบตอน ack* เทียบกับ *เก็บไว้และติดตาม offset* — ส่งผลต่อเนื่องไปยังทุกอย่างที่เหลือ
+
+<Mermaid title="queue แบบ consume-and-delete เทียบกับ log ที่เก็บไว้พร้อม offset" code={vsDiagram} />
+
+export const vsDiagram = `flowchart TB
+  subgraph rmq["RabbitMQ — queue"]
+    m1["msg"] --> qd["deliver"] --> ackd["ack"] --> gone["ถูกลบ"]
+  end
+  subgraph kafka["Kafka — log"]
+    log["[0][1][2][3][4] เก็บไว้"]
+    ca["consumer A ที่ offset 2"] --> log
+    cb["consumer B ที่ offset 4"] --> log
+  end`;
+
+## เปรียบเทียบกันตรง ๆ
+
+| | RabbitMQ | Kafka |
+|--|----------|-------|
+| **โมเดลหลัก** | Queue — deliver แล้วลบ | Log — append แล้วเก็บไว้ |
+| **บทบาทของ broker** | ฉลาด: route, ติดตาม ack, redeliver | เรียบง่าย: เก็บ log ที่เรียงลำดับ |
+| **หลัง consume** | message ถูกลบตอน ack | message ถูกเก็บ; offset เลื่อนไปข้างหน้า |
+| **Replay** | ไม่ได้ (หายไปเมื่อ ack แล้ว) | ได้ — ย้อน offset แล้วอ่านซ้ำ |
+| **Routing** | ครบครัน (direct/topic/fanout/headers) | ตาม partition/topic; logic อยู่ที่ consumer |
+| **Ordering** | ต่อ queue | แข็งแรงภายใน partition |
+| **Throughput** | สูง; เด่นเรื่อง routing ซับซ้อน | สูงมาก; สร้างมาเพื่อ stream แบบ firehose |
+| **เก่งที่สุดตรง** | task distribution, RPC, routing ซับซ้อน, workflow ระดับ per-message | event streaming, replay, analytics pipeline, throughput มหาศาล |
+
+## จะเลือกอย่างไร
+
+หยิบ **RabbitMQ** เมื่อคุณมี **หน่วยงานที่แยกเป็นชิ้น ๆ** ให้กระจาย, ต้องการ routing ที่ครบครัน, หรืออยากได้ acknowledgement และ retry ระดับ per-message — background job, order processing, request/reply message คือ *task* ที่ทำครั้งเดียวแล้วหายไป
+
+หยิบ **Kafka** เมื่อคุณมี **stream ของ event** ที่ระบบอิสระหลายตัว consume ตามจังหวะของตัวเอง, เมื่อคุณต้องการ **replay** (consumer ใหม่ reprocess ประวัติ), หรือเมื่อ throughput มหาศาล — event sourcing, activity stream, metrics pipeline message คือ *fact* ที่บันทึกใน log ที่อยู่ต่อไป
+
+และบ่อยครั้งคำตอบที่ถูกคือ **ใช้ทั้งคู่**: Kafka เป็น event backbone ที่ทนทาน, RabbitMQ สำหรับ task queue และ RPC ระหว่าง service มันไม่ได้เป็นคู่แข่งกันเท่ากับเป็นเครื่องมือคนละแบบ
+
+<Callout title="สรุปหนึ่งบรรทัด">
+RabbitMQ คือ **smart broker** ที่ลบ message ทันทีที่ถูก acknowledge — เหมาะสำหรับกระจาย task แยกชิ้นพร้อม routing และ retry ที่ครบครัน Kafka คือ **log ที่เก็บไว้และ replay ได้** ที่ consumer ติดตาม offset ของตัวเอง — เหมาะสำหรับ event stream ที่หลายระบบ reprocess เลือกด้วยการถามว่า message นี้คือ *task ที่ทำครั้งเดียว* (RabbitMQ) หรือ *fact ที่ต้องเก็บและ replay* (Kafka)
+</Callout>
+
+export const quizKafka = [
+  {
+    q: 'เกิดอะไรขึ้นกับ message ใน RabbitMQ หลัง consumer acknowledge มัน?',
+    options: [
+      'ถูกเก็บไว้เพื่อ replay',
+      'ถูกลบออกจาก queue',
+      'ถูก copy ไปยังทุก queue อื่น',
+      'ถูกเขียนลง log ถาวร',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Kafka consumer ติดตามว่าตัวเองอ่านอะไรไปแล้วอย่างไร?',
+    options: [
+      'broker ลบ message ที่ส่งไปแล้ว',
+      'consumer แต่ละตัวติดตาม offset ของตัวเอง และย้อนกลับไปอ่านซ้ำได้',
+      'มันส่ง ack ที่ลบ message',
+      'มันอ่าน message ซ้ำไม่ได้',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'workload ไหนเหมาะกับ Kafka มากกว่า RabbitMQ?',
+    options: [
+      'กระจาย background task resize รูปไปยัง worker',
+      'request/reply RPC ระหว่างสอง service',
+      'event stream ที่ระบบอิสระหลายตัว consume และบางครั้ง replay จากประวัติ',
+      'work queue ง่าย ๆ ที่ retry ระดับ per-message',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'ข้อไหนสรุปความต่างหลักได้ดีที่สุด?',
+    options: [
+      'RabbitMQ เร็วกว่า Kafka เสมอ',
+      'RabbitMQ คือ smart broker ที่ลบ message ตอน ack; Kafka คือ log ที่เก็บไว้ พร้อม offset ที่ consumer ติดตามเอง',
+      'Kafka รองรับ routing; RabbitMQ ไม่รองรับ',
+      'มันเหมือนกันหมดยกเว้นชื่อ',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="patterns-and-alternatives/rabbitmq-vs-kafka" questions={quizKafka} />
+
+<ProgressTracker client:visible id="patterns-and-alternatives/rabbitmq-vs-kafka" />

@@ -1,0 +1,99 @@
+---
+title: 'RabbitMQ Streams'
+description: 'log แบบ append-only ที่ replay ได้ ซึ่ง build มาในตัว RabbitMQ — non-destructive read พร้อม offset, โมเดลแบบ Kafka โดยไม่ต้องออกจาก RabbitMQ และเมื่อไรควรใช้ stream แทน queue'
+sidebar:
+  order: 4
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## log ในตัว RabbitMQ
+
+บทเรียนก่อนหน้าวาง RabbitMQ กับ Kafka เป็นขั้วตรงข้าม — queue แบบ delete-on-ack เทียบกับ log ที่เก็บไว้ **RabbitMQ Streams** ทำให้เส้นแบ่งนั้นเบลอ: มันนำ **log แบบ append-only** สไตล์ Kafka เข้ามา *ใน* RabbitMQ เอง คุณจึงได้ replay และ fan-out สูง ๆ โดยไม่ต้องเพิ่มระบบตัวที่สอง
+
+stream คือ queue type ตัวหนึ่ง (declare ด้วย `x-queue-type: stream`) แต่มันทำงานต่างจาก classic queue มาก:
+
+- message ถูก **append เข้า log** และ **เก็บไว้** ไม่ถูกลบตอนอ่าน
+- การอ่านเป็นแบบ **non-destructive** — consume ไม่ลบอะไรทั้งนั้น
+- consumer แต่ละตัวอ่านจาก **offset** ที่ตัวเองควบคุม และเริ่มจากต้น, ท้าย, timestamp หรือตำแหน่งที่ save ไว้ก็ได้
+- consumer หลายตัวอ่าน stream **เดียวกัน** ได้อย่างอิสระและด้วยความเร็วต่างกัน
+
+<Mermaid title="stream: log เดียวที่เก็บไว้ consumer หลายตัวที่ offset ของตัวเอง" code={streamDiagram} />
+
+export const streamDiagram = `flowchart LR
+  prod["Producer"] -->|append| log["Stream log\n[0][1][2][3][4][5]"]
+  log --> c1["Consumer A\noffset 1 (กำลัง replay)"]
+  log --> c2["Consumer B\noffset 5 (live)"]
+  log --> c3["Consumer C\nจาก timestamp"]`;
+
+## Stream เทียบกับ classic queue
+
+| | Classic queue | Stream |
+|--|---------------|--------|
+| **ตอนอ่าน** | ถูกลบหลัง ack | ถูกเก็บไว้ (non-destructive) |
+| **Replay** | ไม่ได้ | ได้ — reset offset |
+| **ผู้อ่านหลายตัวของ data เดียวกัน** | แข่งกันแย่ง message | แต่ละตัวอ่านทั้ง log อย่างอิสระ |
+| **Retention** | จนกว่าจะถูก consume | ตามเวลาหรือขนาด (เช่น เก็บ 7 วัน) |
+| **เก่งที่สุดตรง** | task distribution, งานระดับ per-message | event fan-out, replay, การอ่านระดับใหญ่ |
+
+เพราะ stream เก็บ data ไว้ คุณจึง declare **retention** — ตามเวลาหรือขนาดรวม — แทนที่จะพึ่งการ consume มาเคลียร์ segment เก่าจะถูกตัดทิ้งเมื่อเกินอายุ
+
+## เมื่อไรควรใช้ stream
+
+เลือก **stream** เมื่อคุณอยากได้ log สไตล์ Kafka แต่ไม่อยากรัน Kafka: คุณต้องการ **replay**, คุณมี **consumer หลายตัวอ่าน event เดียวกัน**, หรือคุณกำลังรับ **firehose ที่ throughput สูง** และอยากได้ retention ตามเวลา และยังมี **super stream** — stream ที่ partition แล้ว — สำหรับ scale stream เชิง logic ตัวเดียวข้าม node คล้าย partition ของ Kafka
+
+อยู่กับ **classic (หรือ quorum) queue** เมื่อ message คือ **task ที่ทำครั้งเดียวแล้วทิ้ง**, เมื่อคุณต้องการ routing และ retry ระดับ per-message หรือเมื่อไม่ต้องการประวัติ งาน task-distribution และ RPC ส่วนใหญ่ยังต้องการ queue ไม่ใช่ stream
+
+<Callout title="สรุปหนึ่งบรรทัด">
+RabbitMQ Streams เพิ่ม **log แบบ append-only ที่ replay ได้** เข้ามาใน RabbitMQ: การอ่านเป็นแบบ non-destructive, consumer แต่ละตัวควบคุม **offset** ของตัวเอง และ data ถูกเก็บด้วย **retention** policy แทนการลบตอน ack ใช้ stream เมื่อคุณจะเอื้อมไปหา Kafka อยู่แล้ว — replay, ผู้อ่านหลายตัวของ event เดียวกัน, fan-out throughput สูง — และอยู่กับ queue สำหรับ task แยกชิ้น
+</Callout>
+
+export const quizStreams = [
+  {
+    q: 'เกิดอะไรขึ้นกับ message ใน RabbitMQ stream เมื่อ consumer อ่านมัน?',
+    options: [
+      'ถูกลบทันที',
+      'ถูกเก็บไว้ — การอ่านเป็นแบบ non-destructive',
+      'ถูกย้ายไปยัง dead-letter exchange',
+      'ถูกส่งกลับไปยัง producer',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'consumer เลือกจุดเริ่มอ่าน stream อย่างไร?',
+    options: [
+      'เริ่มจาก message ใหม่สุดเท่านั้นเสมอ',
+      'ด้วย offset ที่ตัวเองควบคุม — ต้น, ท้าย, timestamp หรือตำแหน่งที่ save ไว้',
+      'broker เลือกแบบสุ่ม',
+      'stream ไม่รองรับการเลือกตำแหน่ง',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'data ถูกเคลียร์ออกจาก stream อย่างไร?',
+    options: [
+      'ถูกลบทันทีที่ consumer ตัวหนึ่ง ack',
+      'ด้วย retention policy ตามเวลาหรือขนาด',
+      'ไม่ถูกเคลียร์เลย',
+      'producer ต้องลบแต่ละ message เอง',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'workload ไหนที่ยังควรอยู่บน classic/quorum queue มากกว่า stream?',
+    options: [
+      'event firehose throughput สูงที่มี replay',
+      'consumer หลายตัวอ่านประวัติ event เดียวกัน',
+      'background task แยกชิ้นที่ทำครั้งเดียวแล้วทิ้ง และต้องการ retry ระดับ per-message',
+      'event fan-out ไปยังระบบที่ความเร็วต่างกัน',
+    ],
+    answer: 2,
+  },
+];
+
+<Quiz client:visible id="patterns-and-alternatives/streams" questions={quizStreams} />
+
+<ProgressTracker client:visible id="patterns-and-alternatives/streams" />

@@ -1,0 +1,80 @@
+---
+title: 'Messaging Foundations'
+description: 'ทำไม asynchronous messaging ถึงมีอยู่, RabbitMQ และ AMQP คืออะไร, คำศัพท์หลัก และการ publish/consume ครั้งแรก — พื้นฐานของทุกอย่างที่เหลือ'
+sidebar:
+  order: 1
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ไอเดียในประโยคเดียว
+
+**RabbitMQ คือ message broker: infrastructure ที่วางอยู่ตรงกลางระหว่าง service ที่ *ผลิต* งาน กับ service ที่ *ทำ* งาน เพื่อให้สองฝั่งไม่ต้องคุยกันตรง ๆ** producer โยน message เข้า RabbitMQ แล้วไปทำอย่างอื่นต่อ ส่วน consumer ก็หยิบไปทำเมื่อพร้อม
+
+การมีตัวกลางคั่นตรงนี้ — buffer ตรงกลาง — คือหัวใจทั้งหมด มันทำให้ระบบรับมือกับ spike ได้, ทนต่อการที่ consumer ล่ม และ scale สองฝั่งแยกจากกันได้
+
+## โมดูลนี้ครอบคลุมอะไรบ้าง
+
+| บทเรียน | สิ่งที่คุณจะได้เรียน |
+|--------|-------------------|
+| What is a message queue? | ปัญหาที่ async messaging แก้ — decoupling, buffering และ resilience |
+| RabbitMQ & AMQP | RabbitMQ คืออะไร และ AMQP 0-9-1 model ที่มัน implement |
+| Core concepts | producer, consumer, connection, channel, exchange, queue, binding, message |
+| Your first queue | publish และ consume message ใน Node, Python และ Go |
+
+## ทำไมต้องเริ่มที่นี่
+
+เกือบทุก feature ของ RabbitMQ — exchange, acknowledgement, dead-letter queue, confirm — ล้วนเป็นการต่อยอดจาก flow ง่าย ๆ อันเดียว จำภาพนี้ไว้ในหัวก่อน:
+
+<Mermaid title="รูปร่างของทุกระบบ RabbitMQ" code={shapeDiagram} />
+
+export const shapeDiagram = `flowchart LR
+  prod["Producer\n(ส่งงาน)"] -->|publish| ex["Exchange\n(route)"]
+  ex -->|binding| q["Queue\n(buffer)"]
+  q -->|deliver| cons["Consumer\n(ทำงาน)"]`;
+
+producer publish ไปที่ **exchange** จากนั้น exchange route message ไปยัง **queue** หนึ่งตัวหรือหลายตัว แล้ว consumer อ่านจาก queue เหล่านั้น producer ไม่เคยรู้เลยว่าใครเป็นคน consume, เมื่อไร หรือมี consumer กี่ตัว ทุกอย่างที่ตามมาคือเรื่องของการควบคุมและทำให้ flow นี้แข็งแรงขึ้น
+
+<Callout title="การเปลี่ยนมุมมอง">
+call แบบ synchronous (HTTP, gRPC) คือการถามคำถามแล้ว **รอคำตอบ** — ฝั่งที่เรียกถูก block และฝั่งที่ถูกเรียกต้องออนไลน์อยู่ตอนนั้น ส่วน messaging คือ **fire-and-forget**: คุณส่งงานให้ broker แล้วไปทำอย่างอื่นต่อ งานจะถูกทำในภายหลังโดยใครก็ตามที่ฟังอยู่ คนละเครื่องมือ คนละการรับประกัน — และที่เหลือของคอร์สนี้ก็ว่าด้วยการรับประกันเหล่านั้น
+</Callout>
+
+export const quizIndex = [
+  {
+    q: 'RabbitMQ คืออะไร ในประโยคเดียว?',
+    options: [
+      'relational database',
+      'message broker ที่วางอยู่ระหว่าง producer กับ consumer เพื่อให้สองฝั่งไม่ต้องคุยกันตรง ๆ',
+      'load balancer สำหรับ HTTP traffic',
+      'caching layer',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ประโยชน์หลักของการวาง broker คั่นระหว่างสอง service คืออะไร?',
+    options: [
+      'ทำให้ทุก call เร็วกว่าการเรียกตรง ๆ',
+      'decouple สองฝั่งออกจากกัน — scale แยกกันได้ และทนต่อการที่อีกฝั่งล่ม',
+      'ทำให้ไม่ต้องใช้ database',
+      'เข้ารหัส traffic ทั้งหมดให้อัตโนมัติ',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'messaging ต่างจาก call แบบ synchronous (HTTP/gRPC) อย่างไร?',
+    options: [
+      'มันคืนค่า response กลับมาทันทีเสมอ',
+      'มันเป็น fire-and-forget — ส่งงานให้ broker แล้วไปทำต่อ แทนที่จะ block รอคำตอบ',
+      'มันต้องการให้ทั้งสอง service ออนไลน์พร้อมกัน',
+      'มันส่งข้อมูลแบบ structured ไม่ได้',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="messaging-foundations/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="messaging-foundations/index" />

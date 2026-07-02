@@ -1,0 +1,83 @@
+---
+title: 'Exchanges & Routing'
+description: 'exchange ทั้ง 4 แบบ — direct, fanout, topic และ headers — และแต่ละแบบตัดสินใจอย่างไรว่า message ที่ publish จะไปลงที่ queue ไหน'
+sidebar:
+  order: 1
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## routing คือหน้าที่ทั้งหมดของ exchange
+
+exchange ไม่เก็บอะไรเลย หน้าที่เดียวของมันคือ **routing**: รับ message ที่ publish เข้ามาแล้วตัดสินใจว่า queue ไหนบ้างจะได้ copy ไป *วิธี* ที่มันตัดสินใจถูกกำหนดโดย **type** ของ exchange เข้าใจทั้ง 4 type แล้วคุณจะออกแบบ topology ของ message flow ได้แทบทุกรูปแบบ
+
+## โมดูลนี้ครอบคลุมอะไรบ้าง
+
+| บทเรียน | exchange ตัดสินใจจาก... |
+|--------|----------------------------|
+| Direct exchange | routing key ที่ตรงกัน **เป๊ะ ๆ** |
+| Fanout exchange | **ไม่ดูอะไรเลย** — copy ไปทุก queue ที่ bind อยู่ |
+| Topic exchange | การ match **pattern** ของ routing key แบบ dotted |
+| Headers & choosing | **header** ของ message พร้อมคู่มือเลือก type |
+
+## ทั้ง 4 type แบบรวบรัด
+
+<Mermaid title="แต่ละ exchange type route message เดียวกันอย่างไร" code={typesDiagram} />
+
+export const typesDiagram = `flowchart TB
+  msg["message\nrouting key: order.created"] --> direct["direct\nmatch key เป๊ะ"]
+  msg --> fanout["fanout\nไม่ดู key, copy ทุกตัว"]
+  msg --> topic["topic\nmatch key pattern"]
+  msg --> headers["headers\nmatch จากค่า header"]`;
+
+โมเดลในหัวที่ให้ถือติดตัวไปทั้งโมดูล:
+
+- message ทุกตัวพก **routing key** (string อย่าง `order.created`) และ **header** (ถ้ามี) ไปด้วยเสมอ
+- **binding** แต่ละเส้นจาก exchange ไป queue อาจพก **binding key** (หรือ pattern หรือเงื่อนไข header) มาด้วย
+- exchange type คือ **กฎ** ที่เอา message มาเทียบกับ binding เพื่อเลือก queue
+
+ที่เหลือ — pub/sub, การกระจายงาน, การ filter event — ก็แค่การเลือก exchange type บวกกับ binding ไม่กี่เส้น
+
+<Callout title="สรุปหนึ่งบรรทัด">
+exchange ทำหน้าที่ route ไม่เคยเก็บ message ไว้ **type** ของมันคือกฎ routing: `direct` match routing key เป๊ะ ๆ, `fanout` copy ไปทุก queue ที่ bind, `topic` match key แบบ pattern และ `headers` match จากค่า header เลือก type แล้วเพิ่ม binding เท่านี้ก็ออกแบบ message flow เสร็จ
+</Callout>
+
+export const quizIndex = [
+  {
+    q: 'หน้าที่เดียวของ exchange คืออะไร?',
+    options: [
+      'เก็บ message ไว้จนกว่า consumer จะพร้อม',
+      'route message ที่ publish เข้ามาไปยัง queue ที่ถูกต้อง',
+      'ack message แทน consumer',
+      'บีบอัด message body',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'อะไรเป็นตัวกำหนดว่า exchange จะ route message อย่างไร?',
+    options: [
+      'ขนาดของ message',
+      'exchange type (direct, fanout, topic หรือ headers)',
+      'consumer ที่จะอ่าน message',
+      'ลำดับที่มัน publish เข้ามา',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'exchange type ไหนที่ไม่สนใจ routing key เลย?',
+    options: [
+      'direct',
+      'topic',
+      'fanout',
+      'headers',
+    ],
+    answer: 2,
+  },
+];
+
+<Quiz client:visible id="exchanges-and-routing/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="exchanges-and-routing/index" />

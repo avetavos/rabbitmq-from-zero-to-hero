@@ -1,0 +1,154 @@
+---
+title: 'Connections & Channels'
+description: 'การจัดการ connection บน production — one connection ต่อ process, one channel ต่อ worker, heartbeat และ automatic recovery เมื่อ network สะดุด'
+sidebar:
+  order: 3
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ความผิดพลาดอันดับหนึ่งบน production
+
+incident ของ RabbitMQ บน production เกิดจาก **การใช้ connection ผิด** มากกว่าสาเหตุอื่น ๆ TCP connection พร้อม TLS handshake และ AMQP negotiation นั้นเปิดแล้วแพง code ที่เปิด connection ต่อ message — หรือต่อ request — จะถล่ม broker ด้วย churn, ใช้ file descriptor จนหมด และล่มเมื่อเจอ load
+
+กฎจากโมดูล foundations พูดใหม่ในบริบท production:
+
+> **one long-lived connection ต่อ process หนึ่ง channel ต่อ worker หรือ task ที่ทำพร้อมกัน และ channel ไม่ thread-safe**
+
+<Mermaid title="รูปแบบที่ถูกต้อง: one connection, หลาย channel, one channel ต่อ worker" code={shapeDiagram} />
+
+export const shapeDiagram = `flowchart LR
+  app["App process"] --> conn["1 long-lived\nconnection"]
+  conn --> ch1["Channel → worker 1"]
+  conn --> ch2["Channel → worker 2"]
+  conn --> ch3["Channel → worker 3"]
+  ch1 --> broker["RabbitMQ"]
+  ch2 --> broker
+  ch3 --> broker`;
+
+## heartbeat ทำให้ connection ซื่อสัตย์
+
+connection อาจดูมีชีวิตในระดับ TCP ทั้งที่ปลายทางหายไปแล้ว (node ล่ม, network drop เงียบ ๆ) **heartbeat** คือ frame ที่ทั้งสองฝั่งส่งหากันเป็นระยะ ถ้าพลาดไปหลายครั้ง connection จะถือว่าตายและถูกปิด ทำให้ client ตรวจจับ broker ที่พังได้ในไม่กี่วินาที แทนที่จะรอ TCP timeout ที่อาจใช้เวลาหลายนาที เปิด heartbeat default ไว้ — ปิดมันคือที่มาของ connection "ซอมบี้"
+
+## automatic recovery
+
+network สะดุดได้เสมอ client ที่ดีจะไม่ crash เมื่อ connection หลุด — มันจะ **reconnect** แล้ว re-declare topology (queue, exchange, binding) และตั้ง consumer ขึ้นใหม่ client ส่วนใหญ่มีความสามารถนี้ แต่คุณต้องออกแบบเผื่อไว้: message ที่ redeliver อาจมาถึงหลัง recovery ดังนั้น consumer ยังต้อง idempotent
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    import amqp from 'amqplib';
+
+    // amqplib has no built-in recovery — wrap connect with retry.
+    async function connectWithRetry(url, attempt = 0) {
+      try {
+        const conn = await amqp.connect(url, { heartbeat: 30 });
+        conn.on('error', (e) => console.error('conn error', e.message));
+        conn.on('close', () => setTimeout(() => connectWithRetry(url), 2000));
+        return conn;
+      } catch (e) {
+        const delay = Math.min(2 ** attempt * 500, 30000);
+        console.warn(`connect failed, retry in ${delay}ms`);
+        await new Promise((r) => setTimeout(r, delay));
+        return connectWithRetry(url, attempt + 1);
+      }
+    }
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    import pika
+
+    # pika's SelectConnection supports recovery; BlockingConnection needs a retry loop.
+    params = pika.ConnectionParameters(
+        host="localhost",
+        heartbeat=30,
+        connection_attempts=5,
+        retry_delay=2,          # seconds between attempts
+        blocked_connection_timeout=300,
+    )
+    conn = pika.BlockingConnection(params)
+    channel = conn.channel()   # re-declare topology after any reconnect
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    // amqp091-go has no auto-recovery — loop on the connection's NotifyClose.
+    for {
+        conn, err := amqp.DialConfig("amqp://guest:guest@localhost:5672/",
+            amqp.Config{Heartbeat: 30 * time.Second})
+        if err != nil {
+            time.Sleep(2 * time.Second)
+            continue
+        }
+        closed := conn.NotifyClose(make(chan *amqp.Error, 1))
+        runWorkers(conn)     // declare topology + consumers here
+        <-closed             // block until the connection drops, then reconnect
+        log.Println("connection lost, reconnecting...")
+    }
+    ```
+  </TabItem>
+</Tabs>
+
+## checklist สั้น ๆ สำหรับ production
+
+- **one connection ต่อ process** ใช้ซ้ำตลอดอายุของแอป
+- **one channel ต่อ worker/goroutine/thread** — อย่าแชร์ channel ข้าม thread
+- **แยก channel ของ publisher ออกจาก channel ของ consumer** (channel error เช่น publish ไป exchange ที่ไม่มี จะปิดทั้ง channel)
+- **เปิด heartbeat ไว้** เพื่อให้ตรวจจับ connection ที่ตายได้เร็ว
+- **reconnect พร้อม backoff** และ re-declare topology + consumer ตอน recovery
+
+<Callout title="สรุปสั้น ๆ">
+connection churn คือ failure mode อันดับหนึ่งบน production: เปิด **one long-lived connection ต่อ process** ใส่ **one channel ต่อ worker** ลงไป (channel ไม่ thread-safe) และเปิด **heartbeat** ไว้เพื่อจับ connection ที่ตายได้ในไม่กี่วินาที ออกแบบเผื่อ network สะดุด — **reconnect พร้อม backoff**, re-declare topology และ consumer, และทำ consumer ให้ idempotent เพราะ recovery อาจ redeliver ได้
+</Callout>
+
+export const quizConn = [
+  {
+    q: 'ความผิดพลาดบน production ที่พบบ่อยที่สุดเรื่อง connection ของ RabbitMQ คืออะไร?',
+    options: [
+      'การใช้ TLS',
+      'เปิด connection ต่อ message หรือต่อ request ทำให้เกิด churn ที่ใช้ทรัพยากร broker จนหมด',
+      'declare queue เป็น durable',
+      'ใช้ exchange มากกว่าหนึ่งตัว',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'heartbeat ทำอะไรให้เรา?',
+    options: [
+      'บีบอัด message',
+      'ทำให้ client ตรวจจับ connection ที่ตายได้ในไม่กี่วินาที แทนที่จะรอ TCP timeout',
+      'ack message ให้อัตโนมัติ',
+      'replicate queue',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'หลัง automatic reconnection, client ที่ดีต้องทำอะไร?',
+    options: [
+      'ไม่ต้องทำอะไร — broker คืนทุกอย่างให้เอง',
+      're-declare topology (queue, exchange, binding) และตั้ง consumer ขึ้นใหม่',
+      'ลบ queue ทั้งหมดแล้วเริ่มใหม่',
+      'ย้ายไป broker ใหม่',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไมต้องแยกงาน publisher กับ consumer ไว้คนละ channel?',
+    options: [
+      'เป็นข้อบังคับของ AMQP',
+      'channel error จะปิดทั้ง channel ดังนั้นการแยก role ช่วยจำกัด blast radius',
+      'channel ทำได้อย่างเดียวระหว่าง publish หรือ consume',
+      'มันเพิ่ม throughput เป็นสองเท่าอัตโนมัติ',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="operations-and-scaling/connections-and-channels" questions={quizConn} />
+
+<ProgressTracker client:visible id="operations-and-scaling/connections-and-channels" />

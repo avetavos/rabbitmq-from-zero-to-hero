@@ -1,0 +1,60 @@
+---
+title: RabbitMQ — From Zero to Hero
+description: ออกแบบระบบ asynchronous ที่เชื่อถือได้ด้วย RabbitMQ ตั้งแต่พื้นฐาน — AMQP model, exchange และ routing, queue และ acknowledgement, publisher confirm และ dead-letter exchange, work queue และ RPC, clustering และ quorum queue และ RabbitMQ เทียบ Kafka พร้อมตัวอย่าง Node, Python และ Go
+template: splash
+hero:
+  tagline: คอร์สแบบ standalone ตั้งแต่ผู้เริ่มต้นจนถึงขั้นสูง ว่าด้วยการออกแบบระบบ async ด้วย RabbitMQ ตั้งแต่ AMQP model และ exchange routing ไปจนถึง acknowledgement, publisher confirm, dead-letter exchange, work queue, RPC, quorum queue และการ scale — ทุกหัวข้อมีเหตุผล, trade-off และตัวอย่าง Node, Python และ Go คู่กัน
+  actions:
+    - text: เริ่มที่นี่
+      link: /rabbitmq/th/messaging-foundations/
+      icon: right-arrow
+      variant: primary
+    - text: ข้ามไปที่ Exchanges & Routing
+      link: /rabbitmq/th/exchanges-and-routing/
+      icon: open-book
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## สิ่งที่คุณจะได้เรียน
+
+<CardGrid>
+  <Card title="Messaging Foundations" icon="rocket">
+    ทำไมต้อง async messaging, RabbitMQ และ AMQP คืออะไร, core concept และ publish/consume ครั้งแรก [เริ่ม →](/rabbitmq/th/messaging-foundations/)
+  </Card>
+  <Card title="Exchanges & Routing" icon="random">
+    direct, fanout, topic และ headers exchange — message หา queue ของมันเจอได้อย่างไร [route →](/rabbitmq/th/exchanges-and-routing/)
+  </Card>
+  <Card title="Queues & Messages" icon="seti:config">
+    queue และ message properties, acknowledgement, prefetch/QoS และ TTL กับ limit [ปรับจูน →](/rabbitmq/th/queues-and-messages/)
+  </Card>
+  <Card title="Reliability & Delivery" icon="approve-check">
+    publisher confirm, dead-letter exchange, delivery guarantee และ durability [ทำให้ทนทาน →](/rabbitmq/th/reliability/)
+  </Card>
+  <Card title="Consumer Patterns" icon="seti:plan">
+    work queue, publish/subscribe, RPC over RabbitMQ และ retry with backoff [นำไปใช้ →](/rabbitmq/th/consumer-patterns/)
+  </Card>
+  <Card title="Operations & Scaling" icon="seti:db">
+    clustering และ quorum queue, connection และ channel, monitoring และ flow control [scale →](/rabbitmq/th/operations-and-scaling/)
+  </Card>
+  <Card title="Patterns & Alternatives" icon="puzzle">
+    messaging pattern, RabbitMQ เทียบ Kafka, Streams และ consumer ระดับ production [ต่อยอด →](/rabbitmq/th/patterns-and-alternatives/)
+  </Card>
+</CardGrid>
+
+## คอร์สนี้ทำงานยังไง
+
+<CardGrid>
+  <Card title="เข้าใจ model ก่อน แล้วค่อยดู code" icon="rocket">
+    ทุกบทเรียนเริ่มจาก AMQP model — producer, exchange, binding, queue, consumer — พอเห็นภาพว่า message ไหลอย่างไร code ก็จะชัดเจนขึ้นเอง
+  </Card>
+  <Card title="สามภาษาเทียบกันชัด ๆ" icon="seti:config">
+    ตัวอย่าง producer และ consumer ใน Node (amqplib), Python (pika) และ Go (amqp091) ผ่านแท็บที่ sync กัน เลือกภาษาครั้งเดียวแล้วตามไปทุกที่
+  </Card>
+  <Card title="เน้นการออกแบบ ไม่ใช่แค่ syntax" icon="approve-check">
+    ทุกหัวข้อครอบคลุมเหตุผลและ trade-off — เมื่อไรควร ack เอง, การันตี delivery อย่างไร, จัดการ poison message อย่างไร และเมื่อไรที่ queue เป็นเครื่องมือที่ผิด
+  </Card>
+  <Card title="ไดอะแกรมที่อธิบายได้" icon="puzzle">
+    exchange routing, acknowledgement flow, dead-letter retry และ RPC correlation เป็นไดอะแกรม Mermaid ที่รองรับธีม สองภาษา (English / ไทย) พร้อมบันทึกความคืบหน้า quiz
+  </Card>
+</CardGrid>

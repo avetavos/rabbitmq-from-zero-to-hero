@@ -1,0 +1,134 @@
+---
+title: 'Durability & Persistence'
+description: 'What actually survives a broker restart — durable queues AND persistent messages, why you need both, the fsync trade-off, and how quorum queues change the story.'
+sidebar:
+  order: 5
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The restart test
+
+Everything so far assumed the broker keeps running. But brokers restart — deploys, crashes, kernel updates. The question that separates a toy setup from a production one is: **when RabbitMQ restarts, what's still there?**
+
+By default, disappointingly little. A queue and its messages live in memory, and a restart wipes them unless you asked for durability — and here's the catch that trips up almost everyone: it takes **two** independent settings, and one without the other still loses your data.
+
+## Two settings, both required
+
+Surviving a restart needs both of these to be true:
+
+1. **The queue is durable.** A durable queue's *definition* is written to disk, so the queue still exists after a restart. Set `durable: true` when you declare it.
+2. **The message is persistent.** A persistent message's *body* is written to disk. Set `delivery_mode = 2` (persistent) when you publish it.
+
+Miss either one and you lose data on restart:
+
+<Mermaid title="Only durable queue + persistent message survives a restart" code={survivalDiagram} />
+
+export const survivalDiagram = `flowchart TB
+  a["durable queue +\npersistent message"] -->|restart| a2["survives"]
+  b["durable queue +\ntransient message"] -->|restart| b2["queue stays,\nMESSAGES LOST"]
+  c["non-durable queue +\npersistent message"] -->|restart| c2["QUEUE GONE\n(messages with it)"]
+  d["non-durable +\ntransient"] -->|restart| d2["all lost"]`;
+
+The classic production incident: a team declares a durable queue, feels safe, and forgets to publish messages as persistent. The queue faithfully survives every restart — **empty**, because the messages inside it were transient. Durable queue, transient messages: the queue lives, the data dies.
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    // 1) durable queue — survives restart
+    await channel.assertQueue('orders', { durable: true });
+
+    // 2) persistent message — body written to disk
+    channel.sendToQueue('orders', Buffer.from(body), { persistent: true });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    # 1) durable queue
+    channel.queue_declare(queue="orders", durable=True)
+
+    # 2) persistent message (delivery_mode=2)
+    channel.basic_publish(
+        exchange="", routing_key="orders", body=body,
+        properties=pika.BasicProperties(delivery_mode=2),
+    )
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    // 1) durable queue
+    ch.QueueDeclare("orders", true, false, false, false, nil)
+
+    // 2) persistent message
+    ch.PublishWithContext(ctx, "", "orders", false, false, amqp.Publishing{
+        DeliveryMode: amqp.Persistent, // = 2
+        Body:         body,
+    })
+    ```
+  </TabItem>
+</Tabs>
+
+## The trade-off: durability costs latency
+
+Writing to disk is slower than staying in memory, so persistence has a cost. But note an important subtlety: marking a message persistent does **not** guarantee it's on disk the instant you publish — RabbitMQ may batch writes. To be certain a message is safely stored before you consider it sent, pair persistence with **publisher confirms** (previous lesson): the confirm arrives only after the message is safely persisted.
+
+So the honest picture: **durable queue + persistent message + publisher confirms** is the fully-safe combination, and it trades some throughput and latency for not losing data across a restart. For high-volume, loss-tolerant streams (metrics, logs) you may deliberately skip persistence for speed — a legitimate choice, made consciously.
+
+## A note on quorum queues
+
+Classic durable queues survive a restart of *one* node — but a classic queue lives entirely on a single node, so if that node's disk dies, the queue dies with it. **Quorum queues** raise the bar: they replicate the queue across several nodes using the Raft consensus algorithm, so the data survives the loss of a whole node, not just a restart. They're the modern default for anything that must not be lost — and the Operations & Scaling module covers them in depth.
+
+<Callout title="The one-line takeaway">
+Surviving a broker restart takes **both** a durable queue (so the queue definition persists) **and** persistent messages (so the bodies persist) — one without the other still loses data, and the classic trap is a durable queue full of transient messages that comes back empty. Pair them with **publisher confirms** to know a message is truly on disk, and reach for **quorum queues** when you need to survive losing a whole node, not just a restart.
+</Callout>
+
+export const quizDurability = [
+  {
+    q: 'What two settings are BOTH required for a message to survive a broker restart?',
+    options: [
+      'A durable exchange and a bound queue',
+      'A durable queue AND a persistent message',
+      'Publisher confirms and the mandatory flag',
+      'Auto-ack and prefetch',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'You declare a durable queue but publish transient messages, then the broker restarts. What happens?',
+    options: [
+      'Everything survives',
+      'The queue survives but comes back empty — the messages were lost',
+      'The queue is deleted',
+      'The messages survive but the queue is gone',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why pair persistence with publisher confirms?',
+    options: [
+      'Confirms make messages smaller',
+      'A persistent message may not be on disk immediately; the confirm arrives only after it is safely persisted',
+      'Confirms replace the need for durable queues',
+      'It disables disk writes',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What do quorum queues add over a classic durable queue?',
+    options: [
+      'Faster in-memory throughput only',
+      'Replication across multiple nodes (via Raft), surviving the loss of a whole node — not just a restart',
+      'Automatic message compression',
+      'They remove the need to ack',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="reliability/durability-and-persistence" questions={quizDurability} />
+
+<ProgressTracker client:visible id="reliability/durability-and-persistence" />

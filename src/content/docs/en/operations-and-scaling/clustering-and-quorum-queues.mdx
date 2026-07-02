@@ -1,0 +1,112 @@
+---
+title: 'Clustering & Quorum Queues'
+description: 'How RabbitMQ nodes form a cluster, why a classic queue is a single point of failure, and why quorum queues are the modern high-availability default.'
+sidebar:
+  order: 2
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## A cluster shares metadata, not queues
+
+A RabbitMQ **cluster** is several nodes that act as one logical broker. They share **metadata** — exchanges, bindings, users, vhosts, and which queues exist — so a client can connect to any node and see the same topology.
+
+But here is the catch that surprises people: **a classic queue lives entirely on the one node where it was declared.** The other nodes know the queue exists, but they hold none of its messages. If a client connects elsewhere, its operations are simply forwarded to the node that owns the queue.
+
+<Mermaid title="A classic queue lives on one node — a single point of failure" code={classicDiagram} />
+
+export const classicDiagram = `flowchart TB
+  c["Client\n(connects anywhere)"] --> n1["Node 1\nqueue: orders (owner)"]
+  c -.forwarded.-> n2["Node 2\n(no messages)"]
+  c -.forwarded.-> n3["Node 3\n(no messages)"]
+  n1 --> risk["Node 1 dies →\nqueue + messages gone"]`;
+
+So clustering alone gives you **scale and shared topology**, but not **high availability for a queue's messages**. If the owning node dies, a classic (non-replicated) queue and its contents go with it.
+
+## The old answer: mirrored queues (now deprecated)
+
+Historically, the fix was **classic mirrored queues** — replicate a queue's contents to mirror copies on other nodes. Mirroring worked, but it was operationally painful: slow synchronization of large queues, tricky failover semantics, and edge cases that could lose or duplicate messages under partition. Mirrored queues are **deprecated** and should not be used for new systems.
+
+## The modern answer: quorum queues
+
+**Quorum queues** are replicated queues built on the **Raft** consensus algorithm. A quorum queue has a leader and followers across cluster nodes; a message is only confirmed once a **majority (quorum)** of replicas have stored it durably.
+
+<Mermaid title="A quorum queue replicated across three nodes" code={quorumDiagram} />
+
+export const quorumDiagram = `flowchart TB
+  p["Publisher"] --> leader["Node 1: leader replica"]
+  leader --> f1["Node 2: follower"]
+  leader --> f2["Node 3: follower"]
+  leader --> conf["confirmed only after\na majority store it"]
+  leader --> ha["leader dies →\na follower is elected,\nno messages lost"]`;
+
+Because a majority must agree, quorum queues survive the loss of a minority of nodes (e.g. one node out of three) with **no message loss** and automatic leader election. This is the default choice for HA in modern RabbitMQ.
+
+## The trade-offs
+
+Replication is not free, and quorum queues make deliberate choices:
+
+| | Classic queue | Quorum queue |
+|--|---------------|--------------|
+| **Replication** | None (one node) | Raft, majority quorum |
+| **Node failure** | Messages lost | Survives minority failure |
+| **Throughput** | Highest | Lower (replication cost) |
+| **Latency** | Lowest | Higher (wait for quorum) |
+| **Memory model** | Can hold in memory | Always durable, on disk |
+| **Best for** | Transient, high-throughput | Important messages you can't lose |
+
+Quorum queues are always durable and require an odd number of replicas (usually 3 or 5) to break ties. Use them for messages that matter; a classic queue can still be right for cheap, transient, high-throughput work where loss is acceptable.
+
+<Callout title="The one-line takeaway">
+A cluster shares metadata, but a **classic queue lives on one node** — lose that node and you lose the queue. **Quorum queues** fix this with Raft-based replication: a message is confirmed only after a majority of replicas store it, so the queue survives a minority of nodes failing with no message loss. They cost throughput and latency, so use them for messages you can't afford to lose. Old **mirrored queues are deprecated** — don't use them.
+</Callout>
+
+export const quizCluster = [
+  {
+    q: 'In a RabbitMQ cluster, where does a classic queue actually store its messages?',
+    options: [
+      'Evenly spread across all nodes',
+      'Only on the single node where it was declared',
+      'On the client',
+      'In a shared database',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What do quorum queues use to replicate safely?',
+    options: [
+      'The Raft consensus algorithm with a majority quorum',
+      'DNS round-robin',
+      'A shared network disk',
+      'Message TTL',
+    ],
+    answer: 0,
+  },
+  {
+    q: 'What is the status of classic mirrored queues?',
+    options: [
+      'The recommended default for HA',
+      'Deprecated — quorum queues replace them for new systems',
+      'Required for clustering',
+      'Faster than quorum queues in every way',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is the main trade-off of a quorum queue versus a classic queue?',
+    options: [
+      'It cannot survive node failure',
+      'Lower throughput and higher latency in exchange for replication and no message loss',
+      'It cannot be durable',
+      'It only works with one consumer',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="operations-and-scaling/clustering-and-quorum-queues" questions={quizCluster} />
+
+<ProgressTracker client:visible id="operations-and-scaling/clustering-and-quorum-queues" />

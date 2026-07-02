@@ -1,0 +1,109 @@
+---
+title: 'RabbitMQ & AMQP'
+description: 'What RabbitMQ is, the AMQP 0-9-1 protocol and model it implements, and why the exchange-binding-queue design is more flexible than a plain queue.'
+sidebar:
+  order: 3
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## RabbitMQ implements a protocol
+
+**RabbitMQ** is a message broker, and the main protocol it speaks is **AMQP 0-9-1** (Advanced Message Queuing Protocol). That distinction matters: AMQP is the *open specification* for how clients and brokers talk, and RabbitMQ is one (very popular) *implementation* of it. Because the protocol is standardized, clients exist for practically every language, and they all interoperate with the same broker.
+
+RabbitMQ also speaks other protocols through plugins — MQTT, STOMP, and its own Streams protocol — but AMQP 0-9-1 is the model this course is built on, and the one you'll use 95% of the time.
+
+## The AMQP model: producers don't publish to queues
+
+Here is the single most important idea in AMQP, and the thing that surprises people coming from simpler queues:
+
+> **A producer never publishes directly to a queue. It publishes to an *exchange*.**
+
+The exchange then decides — based on rules called **bindings** — which queue(s) the message should land in. A plain queue system says "put this in queue X." AMQP says "hand this to the post office (exchange), and the post office routes it by the rules."
+
+<Mermaid title="The AMQP 0-9-1 routing model" code={amqpDiagram} />
+
+export const amqpDiagram = `flowchart LR
+  p["Producer"] -->|"publish\n(routing key)"| x["Exchange"]
+  x -->|binding A| q1["Queue 1"]
+  x -->|binding B| q2["Queue 2"]
+  q1 --> c1["Consumer 1"]
+  q2 --> c2["Consumer 2"]`;
+
+## Why that indirection is powerful
+
+Putting an exchange between producers and queues sounds like extra ceremony, but it buys enormous flexibility:
+
+- **One message, many destinations.** An exchange can route a copy to several queues at once (broadcast) — the producer publishes once and doesn't change.
+- **Routing by content.** Different exchange types route by an exact key, a pattern, or message attributes — so "all payment events" and "only failed payments in Thailand" can be separate queues fed by the same publisher.
+- **Add consumers without touching producers.** Want a new audit log of all orders? Bind a new queue to the exchange. The order service never changes.
+
+This is the difference between a queue (a bucket you put things in) and a *messaging system* (a routing fabric you publish events into).
+
+## The building blocks, named
+
+You'll meet all of these in depth over the next lessons, but here is the vocabulary AMQP gives you:
+
+| Term | What it is |
+|------|-----------|
+| **Broker** | The RabbitMQ server itself |
+| **Connection** | A long-lived TCP connection from a client to the broker |
+| **Channel** | A lightweight virtual connection multiplexed over one connection |
+| **Exchange** | Receives published messages and routes them to queues |
+| **Queue** | A buffer that stores messages until a consumer takes them |
+| **Binding** | A rule linking an exchange to a queue |
+| **Routing key** | A label on a message the exchange uses to route it |
+
+<Callout title="The one-line takeaway">
+RabbitMQ is a broker that implements the AMQP 0-9-1 protocol, whose defining idea is that producers publish to an **exchange**, not a queue — and the exchange routes to queues via **bindings**. That indirection is what turns a simple queue into a flexible routing fabric where you can broadcast, filter, and add consumers without ever touching the producer.
+</Callout>
+
+export const quizAmqp = [
+  {
+    q: 'What is the relationship between RabbitMQ and AMQP?',
+    options: [
+      'They are two names for the same product',
+      'AMQP is an open protocol/spec; RabbitMQ is a broker that implements it',
+      'RabbitMQ is the protocol; AMQP is the client library',
+      'AMQP replaced RabbitMQ',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'In the AMQP model, where does a producer publish a message?',
+    options: [
+      'Directly into a queue',
+      'To an exchange, which routes it to queues via bindings',
+      'To a consumer',
+      'To a topic file on disk',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why is the exchange-in-the-middle design powerful?',
+    options: [
+      'It makes messages smaller',
+      'It lets one publish reach many queues, route by content, and add consumers without changing producers',
+      'It removes the need for consumers',
+      'It guarantees exactly-once delivery for free',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is a binding?',
+    options: [
+      'A TCP connection to the broker',
+      'A rule that links an exchange to a queue so messages can be routed there',
+      'The acknowledgement a consumer sends',
+      'A serialized message body',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="messaging-foundations/rabbitmq-and-amqp" questions={quizAmqp} />
+
+<ProgressTracker client:visible id="messaging-foundations/rabbitmq-and-amqp" />

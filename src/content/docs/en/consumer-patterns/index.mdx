@@ -1,0 +1,89 @@
+---
+title: 'Consumer Patterns'
+description: 'The handful of message-flow shapes that solve most real problems — work queues, publish/subscribe, RPC, and safe retry — and how to tell them apart.'
+sidebar:
+  order: 1
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## A few shapes solve most problems
+
+By now you know the mechanics — exchanges, queues, bindings, acks. This module is about the **recurring shapes** you assemble them into. Almost every real RabbitMQ system is one of a small number of patterns, or a combination of them.
+
+The key distinction to hold onto: **do you want work *shared* or *broadcast*?**
+
+- **Shared** — many workers pull from *one* queue and each message goes to exactly one of them. That's a **work queue** (competing consumers). It scales throughput.
+- **Broadcast** — each subscriber has its *own* queue and *every* subscriber gets a copy. That's **publish/subscribe**. It fans an event out to independent reactions.
+
+Get that fork in the road right and the rest is detail.
+
+## What this module covers
+
+| Lesson | The pattern |
+|--------|-------------|
+| Work queues | Distribute tasks across competing workers on one shared queue |
+| Publish/subscribe | Broadcast one event to many independent consumers, each with its own queue |
+| RPC over RabbitMQ | Request/reply with `correlation_id` and `reply_to` — and when *not* to |
+| Retry & backoff | Handle failures without tight poison-message loops |
+
+## The shared-vs-broadcast fork
+
+<Mermaid title="One queue shared by workers, versus a queue per subscriber" code={forkDiagram} />
+
+export const forkDiagram = `flowchart TB
+  subgraph wq["Work queue — shared"]
+    x1["exchange"] --> q1["one queue"]
+    q1 --> w1["worker A"]
+    q1 --> w2["worker B"]
+  end
+  subgraph ps["Pub/Sub — broadcast"]
+    x2["fanout exchange"] --> qa["queue A"] --> sa["subscriber A"]
+    x2 --> qb["queue B"] --> sb["subscriber B"]
+  end`;
+
+In a work queue, adding a worker means **more throughput** on the same stream of tasks. In pub/sub, adding a subscriber means **another independent reaction** to the same events. Same broker, opposite intent — decided entirely by whether consumers share a queue or each hold their own.
+
+<Callout title="The mental shift">
+Don't reach for a pattern by name — reach for it by **intent**. "I have too much work for one worker" → work queue (competing consumers on one queue). "Several unrelated things must happen when X occurs" → pub/sub (a queue per subscriber). "I need an answer back" → RPC (but ask first whether a synchronous call would be simpler). Everything else is making those safe under failure.
+</Callout>
+
+export const quizIndex = [
+  {
+    q: 'What is the key distinction between a work queue and publish/subscribe?',
+    options: [
+      'Work queues use JSON; pub/sub uses binary',
+      'In a work queue consumers share one queue (each message goes to one worker); in pub/sub each subscriber has its own queue and gets a copy',
+      'Work queues are faster in every case',
+      'Pub/sub cannot use exchanges',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'You have too many tasks for a single worker to keep up. Which pattern?',
+    options: [
+      'Publish/subscribe',
+      'A work queue with competing consumers',
+      'RPC',
+      'A single consumer with a bigger buffer',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Adding another subscriber in a pub/sub setup does what?',
+    options: [
+      'Increases throughput on the same task stream',
+      'Adds another independent reaction that also receives every event',
+      'Removes messages faster from a shared queue',
+      'Nothing — subscribers are ignored',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="consumer-patterns/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="consumer-patterns/index" />

@@ -1,0 +1,205 @@
+---
+title: 'Your First Queue'
+description: 'publish และ consume message หนึ่งตัวจากต้นจนจบใน Node, Python และ Go — hello-world ขั้นต่ำสุดที่ทุกบทเรียนต่อจากนี้สร้างต่อยอด'
+sidebar:
+  order: 5
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ตัวอย่างที่เล็กที่สุดที่มีประโยชน์
+
+มาส่ง message หนึ่งตัวผ่าน RabbitMQ กัน เพื่อให้เรียบง่ายที่สุด เราจะใช้ **default exchange** — direct exchange ที่ไม่มีชื่อ ซึ่ง RabbitMQ ให้มาอัตโนมัติ โดย routing key ก็คือชื่อ queue นั่นเอง มันทำให้เรา "publish ตรงเข้า queue" ได้โดยยังไม่ต้องประกาศ exchange (ทุกบทเรียนถัด ๆ ไปใช้ named exchange จริง)
+
+ก่อนอื่น run broker บนเครื่องด้วย Docker:
+
+```bash
+docker run -d --name rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management
+```
+
+port `5672` คือ AMQP (สำหรับแอปคุณ); `15672` คือ management UI (เปิด `http://localhost:15672` login ด้วย `guest`/`guest`)
+
+## producer: publish หนึ่ง message
+
+producer connect, เปิด channel, ประกาศ queue (เพื่อให้มันมีอยู่จริง) แล้ว publish message เข้าไป
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    import amqp from 'amqplib';
+
+    const conn = await amqp.connect('amqp://localhost');
+    const channel = await conn.createChannel();
+
+    const queue = 'hello';
+    await channel.assertQueue(queue, { durable: false });
+
+    channel.sendToQueue(queue, Buffer.from('Hello, RabbitMQ!'));
+    console.log('sent: Hello, RabbitMQ!');
+
+    await channel.close();
+    await conn.close();
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    import pika
+
+    conn = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
+    channel = conn.channel()
+
+    channel.queue_declare(queue="hello", durable=False)
+
+    channel.basic_publish(exchange="", routing_key="hello", body="Hello, RabbitMQ!")
+    print("sent: Hello, RabbitMQ!")
+
+    conn.close()
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    conn, _ := amqp.Dial("amqp://guest:guest@localhost:5672/")
+    defer conn.Close()
+    ch, _ := conn.Channel()
+    defer ch.Close()
+
+    q, _ := ch.QueueDeclare("hello", false, false, false, false, nil)
+
+    ch.PublishWithContext(ctx, "", q.Name, false, false, amqp.Publishing{
+        Body: []byte("Hello, RabbitMQ!"),
+    })
+    log.Println("sent: Hello, RabbitMQ!")
+    ```
+  </TabItem>
+</Tabs>
+
+สังเกต exchange ที่เป็น string ว่าง (`""`) — นั่นคือ default exchange และ routing key คือชื่อ queue
+
+## consumer: รับมัน
+
+consumer connect, ประกาศ queue เดียวกัน (การประกาศเป็น idempotent — ทำทั้งสองฝั่งได้อย่างปลอดภัย) แล้ว subscribe callback ของมันจะทำงานทุกครั้งที่มี message ถูก deliver
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    import amqp from 'amqplib';
+
+    const conn = await amqp.connect('amqp://localhost');
+    const channel = await conn.createChannel();
+
+    const queue = 'hello';
+    await channel.assertQueue(queue, { durable: false });
+
+    console.log('waiting for messages...');
+    channel.consume(queue, (msg) => {
+      if (msg) {
+        console.log('received:', msg.content.toString());
+        channel.ack(msg);
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    import pika
+
+    conn = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
+    channel = conn.channel()
+    channel.queue_declare(queue="hello", durable=False)
+
+    def on_message(ch, method, properties, body):
+        print("received:", body.decode())
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+    channel.basic_consume(queue="hello", on_message_callback=on_message)
+    print("waiting for messages...")
+    channel.start_consuming()
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    conn, _ := amqp.Dial("amqp://guest:guest@localhost:5672/")
+    defer conn.Close()
+    ch, _ := conn.Channel()
+    defer ch.Close()
+
+    q, _ := ch.QueueDeclare("hello", false, false, false, false, nil)
+    msgs, _ := ch.Consume(q.Name, "", false, false, false, false, nil)
+
+    log.Println("waiting for messages...")
+    for d := range msgs {
+        log.Printf("received: %s", d.Body)
+        d.Ack(false)
+    }
+    ```
+  </TabItem>
+</Tabs>
+
+## เกิดอะไรขึ้นบ้าง
+
+<Mermaid title="flow ของ hello-world" code={helloDiagram} />
+
+export const helloDiagram = `flowchart LR
+  p["Producer\nsendToQueue('hello')"] -->|default exchange| q["Queue: hello"]
+  q -->|deliver| c["Consumer\nprint + ack"]`;
+
+รายละเอียดสำคัญ แม้จะเล็กน้อย:
+
+1. **ทั้งสองฝั่งประกาศ queue** การประกาศเป็น idempotent และมั่นใจว่า queue มีอยู่ไม่ว่าใครจะ start ก่อน
+2. **message ก็แค่ bytes** RabbitMQ ไม่สนใจ format ของคุณ — string, JSON, protobuf อะไรก็ได้ การ serialize เป็นหน้าที่ของคุณ
+3. **consumer ack** หลัง process แล้ว มันบอก RabbitMQ ว่า "เสร็จแล้ว" เพื่อให้ message ถูกลบ ถ้าข้ามอันนี้ไป คุณจะได้ message เดิมอีกครั้งตอน reconnect (ซึ่งเป็นความปลอดภัยที่คุณอยากได้พอดี — เพิ่มเติมในบท acknowledgement)
+
+<Callout title="The one-line takeaway">
+flow ขั้นต่ำคือ: connect → เปิด channel → ประกาศ queue ทั้งสองฝั่ง → publish bytes → consume แล้ว ack default exchange (string ว่าง) ให้คุณ publish ตรงเข้า queue ด้วยชื่อได้เพื่อเริ่มต้น แต่ระบบจริงประกาศ named exchange แล้ว route ผ่านมัน — ซึ่งคือโมดูลถัดไป
+</Callout>
+
+export const quizFirst = [
+  {
+    q: '"default exchange" ที่ใช้ในตัวอย่าง hello-world คืออะไร?',
+    options: [
+      'topic exchange ชื่อ "default"',
+      'direct exchange ที่ไม่มีชื่อ ซึ่ง routing key คือชื่อ queue',
+      'queue พิเศษที่ไม่เก็บอะไรเลย',
+      'management UI',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไมทั้ง producer และ consumer ต้องประกาศ queue?',
+    options: [
+      'จำเป็นต้องทำเพื่อจะส่ง bytes ได้',
+      'การประกาศเป็น idempotent และมั่นใจว่า queue มีอยู่ไม่ว่าใครจะ start ก่อน',
+      'แต่ละฝั่งต้องมี queue แยกของตัวเอง',
+      'เพื่อ reset เนื้อหาใน queue',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'message body ต้องอยู่ใน format ไหน?',
+    options: [
+      'ต้องเป็น JSON ที่ valid',
+      'ต้องเป็น XML',
+      'bytes อะไรก็ได้ — RabbitMQ ไม่สน; การ serialize เป็นหน้าที่ของคุณ',
+      'ต้องเป็น protobuf message',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'ack ของ consumer ทำอะไร?',
+    options: [
+      'ส่ง message กลับไปหา producer',
+      'บอก RabbitMQ ว่า message ถูก process แล้ว จึงลบออกจาก queue ได้',
+      'สร้าง queue ใหม่',
+      'compress message',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="messaging-foundations/your-first-queue" questions={quizFirst} />
+
+<ProgressTracker client:visible id="messaging-foundations/your-first-queue" />

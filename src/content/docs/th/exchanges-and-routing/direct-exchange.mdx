@@ -1,0 +1,124 @@
+---
+title: 'Direct Exchange'
+description: 'routing ด้วยการ match routing key เป๊ะ ๆ — default exchange, named direct exchange และตัวอย่างแยก log ตาม severity'
+sidebar:
+  order: 2
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## routing แบบ match เป๊ะ
+
+**direct exchange** route message ไปยัง queue ที่มี **binding key** ตรงกับ **routing key** ของ message เป๊ะ ๆ ไม่มี pattern ไม่มี wildcard — เทียบ string ให้เท่ากันตรง ๆ มันคือ exchange type ที่ง่ายที่สุด และเป็นตัวที่หยิบมาใช้เมื่อ message มีปลายทางเป็นหมวดหมู่ที่ชัดเจนหมวดเดียว
+
+จริง ๆ คุณเคยใช้ direct exchange มาแล้วโดยไม่รู้ตัว: **default exchange** คือ direct exchange ที่ไม่มีชื่อ ซึ่งทุก queue จะถูก bind เข้าไปด้วยชื่อของตัวเองโดยอัตโนมัติ นั่นคือเหตุผลที่ publish ไปที่ routing key `hello` ด้วย exchange เป็น string ว่าง แล้วมันไปลงที่ queue ชื่อ `hello`
+
+## ตัวอย่าง: log ตาม severity
+
+สมมติคุณส่ง log message และอยากให้ log ระดับ `error` ไปเข้า queue หนึ่ง (ไว้ alert) และ `info` ไปอีก queue หนึ่ง (ไว้ archive) ก็ประกาศ direct exchange, bind แต่ละ queue ด้วย severity เป็น binding key แล้ว publish โดยใช้ severity เป็น routing key
+
+<Mermaid title="direct exchange match routing key กับ binding key" code={directDiagram} />
+
+export const directDiagram = `flowchart LR
+  p["publish\nkey: error"] --> x["direct exchange\n'logs'"]
+  x -->|"bind key: error"| qe["queue: errors"]
+  x -->|"bind key: info"| qi["queue: info"]
+  x -. "ไม่ match 'error'" .-> qi`;
+
+message ที่ publish ด้วย routing key `error` จะ match แค่ binding ที่ key เป็น `error` เท่านั้น มันจึงไปเข้า queue `errors` ไม่ใช่ `info`
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    const ex = 'logs';
+    await channel.assertExchange(ex, 'direct', { durable: true });
+
+    // consumer side: bind a queue for errors only
+    const q = await channel.assertQueue('errors', { durable: true });
+    await channel.bindQueue(q.queue, ex, 'error');
+
+    // producer side: publish with the severity as the routing key
+    channel.publish(ex, 'error', Buffer.from('disk full on node-3'));
+    channel.publish(ex, 'info', Buffer.from('user logged in'));
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    ex = "logs"
+    channel.exchange_declare(exchange=ex, exchange_type="direct", durable=True)
+
+    # consumer side: bind a queue for errors only
+    channel.queue_declare(queue="errors", durable=True)
+    channel.queue_bind(queue="errors", exchange=ex, routing_key="error")
+
+    # producer side: publish with the severity as the routing key
+    channel.basic_publish(exchange=ex, routing_key="error", body="disk full on node-3")
+    channel.basic_publish(exchange=ex, routing_key="info", body="user logged in")
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    ex := "logs"
+    ch.ExchangeDeclare(ex, "direct", true, false, false, false, nil)
+
+    // consumer side: bind a queue for errors only
+    ch.QueueDeclare("errors", true, false, false, false, nil)
+    ch.QueueBind("errors", "error", ex, false, nil)
+
+    // producer side: publish with the severity as the routing key
+    ch.PublishWithContext(ctx, ex, "error", false, false,
+        amqp.Publishing{Body: []byte("disk full on node-3")})
+    ch.PublishWithContext(ctx, ex, "info", false, false,
+        amqp.Publishing{Body: []byte("user logged in")})
+    ```
+  </TabItem>
+</Tabs>
+
+## หลาย binding, key เดียวกัน
+
+direct exchange ไม่ได้จำกัดที่ queue เดียวต่อ key ถ้ามี queue **สองตัว** bind ด้วย key `error` เหมือนกัน message `error` ตัวเดียวจะถูก copy ไป **ทั้งสอง** queue — คุณจึงผสม routing แบบ match เป๊ะเข้ากับการ fan-out นิด ๆ ได้ ในทางกลับกัน queue เดียวก็ bind ได้หลาย key (bind `errors` กับทั้ง `error` และ `critical`) เพื่อรวบหลายหมวดมาไว้ด้วยกัน
+
+<Callout title="สรุปหนึ่งบรรทัด">
+direct exchange route ด้วยการเทียบ **routing key ให้เท่ากันเป๊ะ**: message ไปเข้าทุก queue ที่ binding key ตรงกับ routing key แบบ string ต่อ string เหมาะเมื่อ message แบ่งเป็นหมวดหมู่ที่ชัดเจนมีชื่อ (log severity, event type) ส่วน default exchange ที่ไม่มีชื่อ ก็คือ direct exchange ที่ทุก queue ถูก bind ด้วยชื่อตัวเอง
+</Callout>
+
+export const quizDirect = [
+  {
+    q: 'direct exchange ตัดสินใจอย่างไรว่า queue ไหนจะได้ message?',
+    options: [
+      'match routing key กับ pattern ที่มี wildcard',
+      'เทียบ string ให้เท่ากันเป๊ะระหว่าง routing key กับ binding key',
+      'copy ไปทุก queue ที่ bind โดยไม่ดู key',
+      'ดูจากขนาดของ message',
+    ],
+    answer: 1,
+  },
+  {
+    q: '"default exchange" คือ exchange type ไหน?',
+    options: [
+      'fanout exchange ชื่อ "default"',
+      'direct exchange ที่ไม่มีชื่อ ซึ่งทุก queue ถูก bind ด้วยชื่อตัวเอง',
+      'topic exchange ที่มี binding แบบ wildcard',
+      'exchange พิเศษที่เก็บ message ไว้',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'queue สองตัว bind เข้า direct exchange ด้วย key "error" เหมือนกัน message ที่ publish ด้วย routing key "error" จะ:',
+    options: [
+      'ไปแค่ queue แรกที่ bind',
+      'ถูก copy ไปทั้งสอง queue',
+      'ถูก reject เพราะกำกวม',
+      'ไม่ไป queue ไหนเลย — ห้าม key ซ้ำ',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="exchanges-and-routing/direct-exchange" questions={quizDirect} />
+
+<ProgressTracker client:visible id="exchanges-and-routing/direct-exchange" />

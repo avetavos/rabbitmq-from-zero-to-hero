@@ -1,0 +1,105 @@
+---
+title: 'Delivery Guarantees'
+description: 'at-most-once, at-least-once และทำไม "exactly-once" delivery ถึงเป็น myth — พร้อมวิธีที่ idempotent consumer ให้ผลแบบ effectively-once'
+sidebar:
+  order: 4
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## สาม guarantee กับทางเลือกจริง ๆ หนึ่งเดียว
+
+ทุก messaging system มี delivery guarantee แบบใดแบบหนึ่ง มีสามแบบที่คุณจะได้ยิน:
+
+| Guarantee | ความหมาย | ความเสี่ยง |
+|-----------|---------|-----------|
+| **At-most-once** | แต่ละ message ถูกส่ง 0 หรือ 1 ครั้ง | **หาย** — message หายได้ |
+| **At-least-once** | แต่ละ message ถูกส่ง 1 ครั้งขึ้นไป | **ซ้ำ** — message ซ้ำได้ |
+| **Exactly-once** | แต่ละ message ถูกส่งพอดี 1 ครั้ง | (ความฝัน) |
+
+ความจริงที่น่าอึดอัด: ในระบบ distributed ที่มี network และ crash **exactly-once *delivery* ทำไม่ได้** มันเป็น myth ดังนั้นทางเลือกจริง ๆ ในการออกแบบคือระหว่าง at-most-once กับ at-least-once — คุณกำลังเลือกว่าจะทน failure แบบไหนได้: message หาย หรือเห็นมันสองครั้ง
+
+## ทำไม "exactly-once" ถึงเป็น myth
+
+ลองนึกภาพจังหวะที่ consumer ทำงานเสร็จ มันต้องทำสองอย่าง: process message และ acknowledge มัน crash เกิดขึ้น *ระหว่าง* สองอย่างนั้นได้ และไม่มีทางทำให้ทั้งคู่เป็น atomic ข้าม network:
+
+<Mermaid title="ช่องว่างที่เลี่ยงไม่ได้ที่ทำให้เกิด duplicate" code={dupDiagram} />
+
+export const dupDiagram = `sequenceDiagram
+  participant Q as Queue
+  participant C as Consumer
+  Q->>C: deliver message
+  C->>C: process (do the work)
+  Note over C: crash HERE, before ack
+  Note over Q: no ack arrived → redeliver
+  Q->>C: deliver AGAIN (duplicate)`;
+
+ถ้า consumer crash *หลัง* ทำงานเสร็จแต่ *ก่อน* ack ถึง RabbitMQ จะ (อย่างถูกต้องและปลอดภัย) สมมติว่างานไม่เคยเกิดขึ้นและ redeliver งานรันสองครั้ง ไม่มีความฉลาดของ broker ใดลบช่องว่างนี้ได้ — process กับ ack มันไม่ใช่ขั้นตอน atomic เดียว
+
+นั่นคือเหตุผลที่ at-least-once เป็น default ที่ซื่อสัตย์และปลอดภัย: RabbitMQ ยอม deliver สองครั้งดีกว่าเสี่ยงทำ message หาย เลือก at-most-once (auto-ack, ไม่มี persistence) เฉพาะตอนที่ message หายนาน ๆ ทีไม่สำคัญจริง ๆ — metrics, live dashboard, ephemeral event
+
+## Effectively-once: at-least-once + idempotency
+
+ข่าวดี: จริง ๆ คุณไม่ต้องการ exactly-once *delivery* คุณต้องการ exactly-once **effect** และคุณได้มันด้วยการทำให้ **consumer idempotent** — process message เดิมสองครั้งให้ผลเหมือน process ครั้งเดียว
+
+วิธี idempotent ที่ใช้ได้จริง:
+
+- **Idempotency key** ให้แต่ละ message มี unique id ที่เสถียร (`message_id` หรือ business key อย่าง `order_id`) ก่อนทำอะไรก็บันทึก "ฉันจัดการ id X แล้ว" ลง database (unique constraint, upsert, `SETNX`) duplicate จะเจอว่า key มีอยู่แล้วและไม่ทำอะไร
+- **operation ที่ idempotent โดยธรรมชาติ** "set status = shipped" รันซ้ำสองครั้งปลอดภัย ส่วน "เพิ่ม balance 10" ไม่ปลอดภัย เลือก set/upsert แทน increment ตรง ๆ เมื่อทำได้
+- **dedup ตอน write** ใช้ unique constraint ของ database บน business key เพื่อให้ duplicate insert fail แบบไม่มีอันตราย
+
+รวม at-least-once delivery ของ RabbitMQ กับ idempotent consumer แล้วคุณได้ **effectively-once processing** — message อาจมาถึงสองครั้ง แต่มัน *มีผล* แค่ครั้งเดียว นั่นคือเป้าที่ถูกต้องและทำได้จริง
+
+<Callout title="สรุปหนึ่งบรรทัด">
+exactly-once *delivery* เป็น myth — ช่องว่างระหว่างทำงานกับ ack ทำให้เกิด duplicate หลัง crash ได้เสมอ ดังนั้น RabbitMQ ให้ **at-least-once** และคุณทำ **consumer ให้ idempotent** (idempotency key, operation แบบ set/upsert, unique constraint) เพื่อให้ duplicate ไม่เป็นอันตราย at-least-once + idempotency = **effectively-once** ซึ่งคือสิ่งที่คุณต้องการจริง ๆ
+</Callout>
+
+export const quizGuarantees = [
+  {
+    q: 'RabbitMQ เลือก delivery guarantee แบบใดเป็น default และความเสี่ยงของมันคืออะไร?',
+    options: [
+      'At-most-once — เสี่ยง duplicate',
+      'At-least-once — เสี่ยง duplicate',
+      'Exactly-once — ไม่มีความเสี่ยง',
+      'At-most-once — เสี่ยงหาย',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไม exactly-once delivery ถึงถือว่าเป็น myth?',
+    options: [
+      'RabbitMQ มีบัก',
+      'consumer crash ระหว่างทำงานกับส่ง ack ได้ ดังนั้น redelivery (duplicate) เลี่ยงไม่ได้',
+      'network เชื่อถือได้เสมอ',
+      'เพราะ message ใส่เลขลำดับไม่ได้',
+    ],
+    answer: 1,
+  },
+  {
+    q: '"effectively-once" processing คืออะไร?',
+    options: [
+      'ส่งแต่ละ message พอดีครั้งเดียวที่ระดับ network',
+      'at-least-once delivery บวก idempotent consumer เพื่อให้ duplicate มีผลแค่ครั้งเดียว',
+      'ปิด acknowledgement',
+      'publish แต่ละ message แค่ครั้งเดียว',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'operation ใด idempotent โดยธรรมชาติมากที่สุด?',
+    options: [
+      'เพิ่ม balance ของบัญชี 10',
+      'append row ลง log โดยไม่มี key',
+      'set order status เป็น "shipped"',
+      'ส่ง email',
+    ],
+    answer: 2,
+  },
+];
+
+<Quiz client:visible id="reliability/delivery-guarantees" questions={quizGuarantees} />
+
+<ProgressTracker client:visible id="reliability/delivery-guarantees" />

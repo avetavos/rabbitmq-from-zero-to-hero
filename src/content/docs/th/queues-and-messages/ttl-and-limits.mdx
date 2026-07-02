@@ -1,0 +1,140 @@
+---
+title: 'TTL & Limits'
+description: 'message และ queue TTL, max-length cap, พฤติกรรมตอน overflow และการใช้ TTL ร่วมกับ dead-letter exchange เพื่อทำ delayed retry'
+sidebar:
+  order: 6
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## queue โตไปเรื่อย ๆ ไม่ได้
+
+ถ้า producer เร็วกว่า consumer queue จะโตแบบไม่มีขอบเขตจนกิน memory หรือ disk ของ broker — แล้วทุกอย่างก็หยุดชะงัก TTL และ length limit คือราวกันตกที่ใส่เพดานให้การโตนั้น และให้คุณตัดสินใจว่า *จะทิ้งอะไร* แทนที่จะล้มทั้งระบบ
+
+## TTL — message ที่หมดอายุ
+
+**TTL** (time-to-live) ทำให้ message หมดอายุหลังจากจำนวนมิลลิวินาทีที่ตั้งไว้ ตั้งได้สองแบบ:
+
+- **ต่อ queue** (`x-message-ttl`) — ทุก message ใน queue หมดอายุหลัง N ms
+- **ต่อ message** (property `expiration`) — message ตัวนี้โดยเฉพาะหมดอายุหลัง N ms
+
+เมื่อ message หมดอายุ มันถูกลบออกจาก queue ที่สำคัญคือ ถ้า queue มี dead-letter exchange message ที่หมดอายุจะถูก **dead-letter** แทนที่จะถูกทิ้งเงียบ ๆ — ซึ่งเป็นพื้นฐานทั้งหมดของทริค delayed-retry ด้านล่าง
+
+**Queue TTL** (`x-expires`) ต่างออกไป: มันลบ *ทั้ง queue* หลังจากมันไม่ถูกใช้ (ไม่มี consumer, ไม่มี get) เป็นเวลา N ms มีประโยชน์สำหรับเก็บกวาด queue ชั่วคราว
+
+## length limit — จำกัด backlog
+
+**`x-max-length`** จำกัดจำนวน message (หรือ `x-max-length-bytes` จำกัดขนาดรวม) เมื่อ queue เต็มและมี message ใหม่มาถึง **พฤติกรรม overflow** ตัดสินว่าอะไรจะยอม:
+
+- **`drop-head`** (default) — ทิ้ง message ที่เก่าที่สุดเพื่อเปิดที่ให้ตัวใหม่
+- **`reject-publish`** — reject message ตัวใหม่ (บอก publisher ได้ผ่าน publisher confirms)
+
+การเลือกระหว่างสองแบบเป็นการตัดสินใจจริง: drop-head เอาข้อมูลสดไว้ก่อน (ดีสำหรับ live metrics), reject-publish เลือกไม่ทำอะไรหายและ push back ไปที่ producer (ดีสำหรับงานที่ทิ้งไม่ได้)
+
+## declare queue พร้อม TTL และ length cap
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    await channel.assertQueue('events', {
+      durable: true,
+      arguments: {
+        'x-message-ttl': 60000,        // messages expire after 60s
+        'x-max-length': 10000,         // keep at most 10k messages
+        'x-overflow': 'reject-publish', // reject new ones when full
+      },
+    });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    channel.queue_declare(
+        queue="events",
+        durable=True,
+        arguments={
+            "x-message-ttl": 60000,          # messages expire after 60s
+            "x-max-length": 10000,           # keep at most 10k messages
+            "x-overflow": "reject-publish",  # reject new ones when full
+        },
+    )
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    args := amqp.Table{
+        "x-message-ttl": int32(60000),        // messages expire after 60s
+        "x-max-length":  int32(10000),        // keep at most 10k messages
+        "x-overflow":    "reject-publish",    // reject new ones when full
+    }
+    ch.QueueDeclare("events", true, false, false, false, args)
+    ```
+  </TabItem>
+</Tabs>
+
+## ทริค: TTL + DLX = delayed retry
+
+นี่คือเหตุผลที่ TTL สำคัญเกินกว่าการเก็บกวาด ใส่ TTL บน queue ที่ **ไม่มี consumer** แล้วชี้ dead-letter exchange ของมันกลับไปที่ main queue ของคุณ message ที่ส่งไปที่นั่นจะนั่งรอตาม TTL หมดอายุ แล้วถูก dead-letter *กลับเข้า flow หลัก* — เป็น **delay** โดยไม่ต้องมี scheduler
+
+<Mermaid title="retry queue: TTL หมดอายุแล้ว dead-letter กลับไปที่ main queue" code={retryDiagram} />
+
+export const retryDiagram = `flowchart LR
+  main["main queue"] -->|"fail, ส่งไป retry"| retry["retry queue\n(TTL 30s, ไม่มี consumer)"]
+  retry -->|"TTL หมดอายุ → dead-letter"| main
+  main --> worker["consumer"]`;
+
+นี่คือวิธีมาตรฐานของ RabbitMQ ในการทำ retry-with-backoff และโมดูล Reliability กับ Consumer Patterns ต่อยอดจากมันโดยตรง
+
+<Callout title="สรุปหนึ่งบรรทัด">
+TTL และ length limit หยุดไม่ให้ queue โตจนล้ม broker Message TTL ทำให้ message แต่ละตัวหมดอายุ; `x-max-length` จำกัด backlog โดย `x-overflow` เลือกว่าจะทิ้งตัวเก่าสุด (`drop-head`) หรือ reject publish ใหม่ (`reject-publish`) และ TTL ไม่ได้มีไว้แค่เก็บกวาด: TTL queue ที่มี dead-letter exchange ชี้กลับไปที่ main queue คือวิธีสร้าง delayed retry โดยไม่ต้องมี scheduler
+</Callout>
+
+export const quizTtl = [
+  {
+    q: 'เกิดอะไรกับ message เมื่อ TTL หมดอายุ ถ้า queue มี dead-letter exchange?',
+    options: [
+      'มันถูกลบเงียบ ๆ',
+      'มันถูก dead-letter ไปยัง exchange ที่ตั้งไว้ แทนที่จะถูกทิ้ง',
+      'มันถูกส่งกลับไปยัง producer',
+      'มันถูก retry ทันทีในที่เดิม',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'x-max-length ที่ใช้ overflow แบบ drop-head (default) ทำอะไรเมื่อ queue เต็ม?',
+    options: [
+      'reject message ใหม่',
+      'ทิ้ง message ที่เก่าที่สุดเพื่อเปิดที่ให้ตัวใหม่',
+      'ลบทั้ง queue',
+      'หยุด consumer ทั้งหมด',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'คุณต้องไม่ทำ message หายและอยาก push back ไปที่ producer เมื่อ queue เต็ม ควรใช้ overflow แบบไหน?',
+    options: [
+      'drop-head',
+      'reject-publish',
+      'x-expires',
+      'auto-delete',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'คุณสร้าง delayed retry-with-backoff ใน RabbitMQ โดยใช้ TTL อย่างไร?',
+    options: [
+      'ตั้งค่า prefetch สูง ๆ',
+      'ใส่ message ใน TTL queue ที่ไม่มี consumer ซึ่ง dead-letter exchange ของมัน route กลับไปที่ main queue หลังหมด TTL',
+      'ใช้ auto-ack',
+      'เพิ่ม x-max-length',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="queues-and-messages/ttl-and-limits" questions={quizTtl} />
+
+<ProgressTracker client:visible id="queues-and-messages/ttl-and-limits" />

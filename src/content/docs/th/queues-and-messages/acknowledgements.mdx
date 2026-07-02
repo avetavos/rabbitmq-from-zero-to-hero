@@ -1,0 +1,152 @@
+---
+title: 'Acknowledgements'
+description: 'manual vs automatic ack, ack/nack/reject และ requeue, redelivered flag และทำไม acknowledgement ถึงเป็นกลไกเบื้องหลัง at-least-once delivery'
+sidebar:
+  order: 4
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## คำสัญญา: อย่าทำงานหาย
+
+คำถามหลักที่ queue ต้องตอบให้ได้คือ: ถ้า consumer หยิบ message ไปแล้ว **crash ก่อนทำเสร็จ** งานนั้นจะเป็นอย่างไร? acknowledgement คือคำตอบ และมันคือกลไก reliability ที่สำคัญที่สุดใน RabbitMQ
+
+**acknowledgement** (ack) คือการที่ consumer บอก broker ว่า: *"ฉันประมวลผล message นี้เสร็จสมบูรณ์แล้ว — ลบมันได้เลย"* จนกว่า ack จะมาถึง RabbitMQ จะถือ message นั้นเป็น *unacknowledged* และจะ redeliver มันถ้า channel ของ consumer ตาย
+
+## manual vs automatic ack
+
+มีสอง mode และความต่างมันมหาศาล:
+
+- **automatic ack** (`autoAck: true` / `auto_ack=True`): message ถือว่า deliver แล้ว *ทันทีที่มันออกจาก broker* ก่อนที่ code ของคุณจะได้แตะ เร็วดี แต่ถ้า consumer crash กลางคัน message นั้นก็ **หายไป** — RabbitMQ ลืมมันไปแล้ว นี่คือ at-most-once และมันทำงานหายเงียบ ๆ
+- **manual ack**: RabbitMQ deliver message แต่เก็บมันเป็น unacknowledged จนกว่าคุณจะ ack อย่างชัดเจน ถ้า channel ปิดโดยไม่มี ack message จะถูก **redeliver** ไปยัง consumer ตัวอื่น นี่คือ at-least-once และเป็นสิ่งที่คุณต้องการสำหรับงานที่สำคัญ
+
+กฎคือ: **ใช้ manual ack กับทุกอย่างที่คุณเสียมันไปไม่ได้**
+
+## ack, nack, reject
+
+ด้วย manual ack คุณมีสามคำตอบ:
+
+- **ack** — เสร็จ ลบได้
+- **nack** (หรือ **reject**) พร้อม `requeue: true` — ประมวลผลไม่ได้; เอากลับเข้า queue เพื่อลองใหม่
+- **nack**/**reject** พร้อม `requeue: false` — ประมวลผลไม่ได้และลองใหม่ก็ไม่ช่วย; ทิ้งมัน (หรือส่งไป dead-letter exchange ถ้าตั้งค่าไว้)
+
+**`redelivered`** flag บน delivery บอกคุณว่า "คุณเคยเห็นตัวนี้มาแล้ว" — เป็นสัญญาณว่าความพยายามครั้งก่อน fail คุณจึงจัดการมันอย่างระวังขึ้นได้
+
+## lifecycle
+
+<Mermaid title="ack ตอนสำเร็จ เทียบกับ redelivery ตอน crash" code={ackDiagram} />
+
+export const ackDiagram = `sequenceDiagram
+  participant Q as Queue
+  participant C as Consumer
+  Q->>C: deliver (unacked)
+  alt ประมวลผลสำเร็จ
+    C->>C: ทำงาน
+    C->>Q: ack
+    Note over Q: message ถูกลบ
+  else consumer crash
+    C--xC: crash ก่อน ack
+    Note over Q: ไม่ได้รับ ack
+    Q->>C: redeliver (redelivered=true)
+  end`;
+
+## manual ack ใน code
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    // noAck: false → manual acknowledgement
+    channel.consume('orders', async (msg) => {
+      if (!msg) return;
+      try {
+        await handle(msg.content);
+        channel.ack(msg);                 // done
+      } catch (err) {
+        channel.nack(msg, false, true);   // requeue for another try
+      }
+    }, { noAck: false });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    def on_message(ch, method, properties, body):
+        try:
+            handle(body)
+            ch.basic_ack(delivery_tag=method.delivery_tag)          # done
+        except Exception:
+            ch.basic_nack(delivery_tag=method.delivery_tag,
+                          requeue=True)                             # retry
+
+    # auto_ack=False → manual acknowledgement
+    channel.basic_consume(queue="orders", on_message_callback=on_message, auto_ack=False)
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    // fourth arg autoAck=false → manual acknowledgement
+    msgs, _ := ch.Consume(q.Name, "", false, false, false, false, nil)
+    for d := range msgs {
+        if err := handle(d.Body); err != nil {
+            d.Nack(false, true) // requeue for another try
+            continue
+        }
+        d.Ack(false) // done
+    }
+    ```
+  </TabItem>
+</Tabs>
+
+<Callout title="สรุปหนึ่งบรรทัด">
+acknowledgement คือวิธีที่ RabbitMQ การันตี at-least-once delivery: ด้วย **manual ack** message จะอยู่เป็น unacknowledged จนกว่า consumer จะ ack มันอย่างชัดเจน crash กลางการประมวลผลจึงทำให้เกิด **redelivery** แทนที่จะทำงานหาย automatic ack เร็วกว่าแต่ทำ message หายเมื่อ fail ให้ ack ตอนสำเร็จ, nack-with-requeue สำหรับ error ที่ลองใหม่ได้ และ nack-without-requeue (ไป DLX) สำหรับ poison message
+</Callout>
+
+export const quizAck = [
+  {
+    q: 'acknowledgement ใน RabbitMQ คืออะไร?',
+    options: [
+      'producer ยืนยันว่า message ถูก publish แล้ว',
+      'consumer บอก broker ว่ามันประมวลผล message เสร็จแล้ว จึงลบได้',
+      'heartbeat ระหว่าง broker กับ client',
+      'สำเนาของ message ที่ส่งกลับไปยัง exchange',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไม automatic ack ถึงเสี่ยงสำหรับงานสำคัญ?',
+    options: [
+      'มันช้ากว่า manual ack',
+      'message ถือว่าเสร็จทันทีที่ออกจาก broker การ crash ของ consumer จึงทำให้มันหาย',
+      'ใช้กับ durable queue ไม่ได้',
+      'ต้องใช้ priority queue',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'consumer เจอ error ชั่วคราวที่อยากลองใหม่ ควรส่งอะไร?',
+    options: [
+      'ack',
+      'nack/reject พร้อม requeue = true',
+      'nack/reject พร้อม requeue = false',
+      'ไม่ต้องทำอะไร — แค่ปิด connection',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'redelivered flag บน delivery บ่งบอกอะไร?',
+    options: [
+      'message เป็น duplicate ที่ producer สร้าง',
+      'RabbitMQ เคย deliver message นี้มาก่อน (ความพยายามครั้งก่อนไม่ได้ ack)',
+      'message หมดอายุแล้ว',
+      'message มาจาก dead-letter exchange',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="queues-and-messages/acknowledgements" questions={quizAck} />
+
+<ProgressTracker client:visible id="queues-and-messages/acknowledgements" />

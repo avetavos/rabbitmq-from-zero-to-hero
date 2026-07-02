@@ -1,0 +1,78 @@
+---
+title: 'Operations & Scaling'
+description: 'Running RabbitMQ in production — clustering and quorum queues, connection and channel management, monitoring, and flow control under load.'
+sidebar:
+  order: 1
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## From "it works" to "it stays up"
+
+Everything so far assumed a single healthy broker. Production is different: a node can die, a queue can become a bottleneck, connections can churn, and a flood of messages can push the broker to its memory limit. This module is about keeping RabbitMQ **available, observable, and stable** under real load.
+
+## What this module covers
+
+| Lesson | What you'll learn |
+|--------|-------------------|
+| Clustering & quorum queues | How nodes form a cluster, and why quorum queues are the modern HA default |
+| Connections & channels | Production connection management, heartbeats, and automatic recovery |
+| Monitoring & management | The management UI, the metrics that matter, and memory/disk alarms |
+| Flow control & alarms | What happens when the broker is overloaded, and how to design around it |
+
+## The three questions production asks
+
+<Mermaid title="What operating RabbitMQ is really about" code={opsDiagram} />
+
+export const opsDiagram = `flowchart TB
+  avail["Availability\nnode dies → do messages survive?"] --> hero["A healthy\nRabbitMQ"]
+  obs["Observability\ncan you see queue depth\nbefore it hurts?"] --> hero
+  stab["Stability\nwhat happens when\nthe broker fills up?"] --> hero`;
+
+- **Availability** — if a node fails, does the queue and its messages survive? (Clustering + quorum queues.)
+- **Observability** — can you see a growing backlog or a stuck consumer before users notice? (Monitoring.)
+- **Stability** — when producers outrun consumers, does the broker protect itself gracefully? (Flow control + alarms.)
+
+<Callout title="The mental shift">
+Development optimizes for "does the message get through?" Operations optimizes for "what happens on the **worst** day?" — a node down, a consumer stuck, disk nearly full. The features in this module all exist to make the bad day survivable instead of catastrophic.
+</Callout>
+
+export const quizIndex = [
+  {
+    q: 'What is the main concern that operations adds on top of "does the message get through?"',
+    options: [
+      'Making messages smaller',
+      'What happens on the worst day — a node down, a stuck consumer, a full disk',
+      'Choosing a serialization format',
+      'Renaming queues',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Which RabbitMQ feature primarily addresses availability when a node dies?',
+    options: [
+      'Prefetch',
+      'Quorum queues (replication across cluster nodes)',
+      'The management UI',
+      'Message TTL',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why does monitoring queue depth matter?',
+    options: [
+      'It makes consumers faster',
+      'A growing backlog warns you of a stuck or too-slow consumer before users are affected',
+      'It reduces message size',
+      'It is required to publish',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="operations-and-scaling/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="operations-and-scaling/index" />

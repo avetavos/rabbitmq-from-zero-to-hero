@@ -1,0 +1,141 @@
+---
+title: 'Monitoring & Management'
+description: 'management UI และ HTTP API, metric ที่สำคัญจริง, Prometheus/Grafana และ memory กับ disk alarm ที่ปกป้อง broker'
+sidebar:
+  order: 4
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## คุณ operate สิ่งที่มองไม่เห็นไม่ได้
+
+RabbitMQ มาพร้อม **management plugin** ที่ให้ web UI และ HTTP API บน port `15672` เปิดมันขึ้นมาแล้วคุณจะเฝ้าดู queue, connection, channel และ rate ได้แบบ live:
+
+```bash
+rabbitmq-plugins enable rabbitmq_management
+# UI อยู่ที่ http://localhost:15672  (default guest/guest, localhost เท่านั้น)
+```
+
+UI เหมาะกับการดูปัญหาด้วยตา แต่สำหรับ monitoring จริงคุณต้องใช้ **HTTP API** (สำหรับ script และ health check) และ **Prometheus plugin** (`rabbitmq_prometheus`) ป้อนเข้า **Grafana** dashboard และ alert
+
+## metric ที่สำคัญจริง
+
+metric มีเป็นสิบ ๆ ตัว แต่ไม่กี่ตัวก็บอกเกือบทุกอย่าง:
+
+| สัญญาณ | หมายความว่าอะไร | ระวังเมื่อ |
+|--------|---------------|-----------|
+| **Queue depth** (`messages_ready`) | message ที่รอถูก deliver | ค่อย ๆ สูงขึ้น = consumer ตามไม่ทัน |
+| **Unacked** (`messages_unacknowledged`) | deliver แล้วแต่ยังไม่ ack | สูง/ค้าง = consumer ช้าหรือแฮงก์ |
+| **Publish rate** เทียบ **deliver/ack rate** | throughput ของ producer เทียบ consumer | publish > ack นาน ๆ = backlog กำลังโต |
+| **Consumer count** | จำนวน consumer บน queue | ตกลงเป็น 0 = ไม่มีใครทำงาน queue นี้ |
+| **Memory & disk** | headroom ของทรัพยากร broker | ใกล้ limit = alarm กำลังจะทำงาน |
+| **Connections / channels** | footprint ของ client | พุ่งเร็ว = บั๊ก connection churn |
+
+alert ที่มีประโยชน์ที่สุดคือ **queue depth ที่กำลังไต่ขึ้น** ขณะที่ consumer count หรือ ack rate นิ่ง — นั่นคือ consumer ที่ค้างหรือ scale ไม่พอ ซึ่งจับได้ก่อน queue จะกิน memory จนเต็ม
+
+## อ่านจาก script
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    // Query the management HTTP API for a queue's depth.
+    const res = await fetch('http://localhost:15672/api/queues/%2F/orders', {
+      headers: { Authorization: 'Basic ' + btoa('guest:guest') },
+    });
+    const q = await res.json();
+    console.log('ready:', q.messages_ready, 'unacked:', q.messages_unacknowledged);
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    import requests
+
+    # %2F is the URL-encoded default vhost "/"
+    r = requests.get("http://localhost:15672/api/queues/%2F/orders",
+                     auth=("guest", "guest"))
+    q = r.json()
+    print("ready:", q["messages_ready"], "unacked:", q["messages_unacknowledged"])
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    req, _ := http.NewRequest("GET",
+        "http://localhost:15672/api/queues/%2F/orders", nil)
+    req.SetBasicAuth("guest", "guest")
+    resp, _ := http.DefaultClient.Do(req)
+    defer resp.Body.Close()
+    var q struct {
+        Ready  int `json:"messages_ready"`
+        Unack  int `json:"messages_unacknowledged"`
+    }
+    json.NewDecoder(resp.Body).Decode(&q)
+    log.Printf("ready=%d unacked=%d", q.Ready, q.Unack)
+    ```
+  </TabItem>
+</Tabs>
+
+สำหรับเช็คเร็ว ๆ บนเครื่อง `rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers` ให้ตัวเลขชุดเดียวกันจาก command line
+
+## alarm: broker ปกป้องตัวเอง
+
+RabbitMQ เฝ้าดูทรัพยากรสองอย่างและยก **alarm** เมื่ออันใดอันหนึ่งเหลือน้อย:
+
+- **Memory alarm** — memory ที่ใช้ทั้งหมดข้าม high-watermark (default 40% ของ RAM)
+- **Disk alarm** — disk ว่างต่ำกว่า limit ที่ตั้งไว้
+
+เมื่อ alarm ทำงาน RabbitMQ จะ **block publisher** (หยุดรับ message ใหม่) แต่ยัง deliver ให้ consumer ต่อ เพื่อให้ backlog ไหลออกแทนที่จะโตขึ้น alarm เป็นกลไกความปลอดภัย ไม่ใช่ความล้มเหลว — แต่ถ้ามันทำงาน *บ่อย* แปลว่า consumer ช้าเกินไปหรือ queue ไม่มีขอบเขต บทเรียนถัดไปจะพูดถึงว่า publisher-blocking รู้สึกยังไงและออกแบบเลี่ยงอย่างไร
+
+<Callout title="สรุปสั้น ๆ">
+เปิด **management plugin** เพื่อใช้ UI + HTTP API และ scrape **Prometheus → Grafana** สำหรับ monitoring จริง เฝ้าดูสัญญาณชุดเล็ก ๆ — **queue depth, unacked count, publish เทียบ ack rate และ consumer count** — และ alert เมื่อ depth ไต่ขึ้นขณะที่ ack นิ่ง (consumer ค้าง) **memory และ disk alarm** ของ RabbitMQ จะ block publisher เพื่อปกป้องตัวเอง; alarm ที่ทำงานบ่อยแปลว่า consumer ตามไม่ทัน
+</Callout>
+
+export const quizMon = [
+  {
+    q: 'สัญญาณตัวเดียวใดที่เตือน consumer ที่ค้างหรือ scale ไม่พอได้ดีที่สุด?',
+    options: [
+      'ขนาด message body',
+      'queue depth ที่ไต่ขึ้นขณะที่ ack rate / consumer count นิ่ง',
+      'จำนวน exchange',
+      'เวอร์ชันของ broker',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ค่า "unacknowledged" ที่สูงและค้างมักบ่งบอกอะไร?',
+    options: [
+      'exchange เยอะเกินไป',
+      'consumer ที่รับ message ไปแล้วแต่ช้าหรือแฮงก์และไม่ ack',
+      'disk เต็ม',
+      'management plugin ถูกปิด',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'RabbitMQ ทำอะไรเมื่อ memory หรือ disk alarm ทำงาน?',
+    options: [
+      'ลบ message เก่าสุดทิ้ง',
+      'block publisher (หยุดรับ message ใหม่) ขณะที่ consumer ยังไหล backlog ออกต่อ',
+      'ปิดตัวเองทั้งหมด',
+      'copy queue ทุกตัว',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'stack ที่แนะนำสำหรับ monitoring บน production คืออะไร?',
+    options: [
+      'ใช้แค่ web UI เช็คด้วยมือ',
+      'Prometheus plugin ป้อนเข้า Grafana dashboard และ alert พร้อม HTTP API สำหรับ script',
+      'อ่าน log file ของ server ด้วยมือ',
+      'ไม่ต้องทำอะไร — RabbitMQ ซ่อมตัวเอง',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="operations-and-scaling/monitoring-and-management" questions={quizMon} />
+
+<ProgressTracker client:visible id="operations-and-scaling/monitoring-and-management" />

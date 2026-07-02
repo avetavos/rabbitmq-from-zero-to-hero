@@ -1,0 +1,98 @@
+---
+title: 'Headers & Choosing an Exchange'
+description: 'routing จาก header ของ message แทน routing key และคู่มือตัดสินใจเลือก direct, fanout, topic หรือ headers'
+sidebar:
+  order: 5
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## headers exchange
+
+**headers exchange** ไม่สนใจ routing key เลย และ route จาก **header** ของ message — คู่ key/value ใน message properties แต่ละ binding ระบุ header ที่ message ต้องพกมาจึงจะ match บวกกับ argument พิเศษ `x-match`:
+
+- `x-match: all` — message ต้องมี header **ทุกตัว** ใน binding (logical AND)
+- `x-match: any` — message ต้องมี **อย่างน้อยหนึ่งตัว** (logical OR)
+
+ตัวอย่างเช่น binding `{ format: "pdf", type: "report", x-match: "all" }` จะ match เฉพาะ message ที่ header มีทั้ง `format=pdf` **และ** `type=report`
+
+<Mermaid title="headers exchange match จากค่า header" code={headersDiagram} />
+
+export const headersDiagram = `flowchart LR
+  p["publish\nheaders: {format: pdf, type: report}"] --> x["headers exchange"]
+  x -->|"x-match: all\nformat=pdf, type=report"| q1["queue: pdf-reports"]
+  x -. "x-match: all\nformat=png" .-> q2["queue: images"]`;
+
+routing ด้วย header ทรงพลังเมื่อเกณฑ์ของคุณเป็นหลายมิติจริง ๆ และยัดลงเป็น dotted string เส้นเดียวไม่ลงตัว แต่ในทางปฏิบัติมันเป็น type ที่ **ใช้น้อยที่สุด**: routing key แบบ topic ที่ออกแบบดี ๆ มักสื่อเจตนาเดียวกันได้ง่ายกว่าและ match เร็วกว่า หยิบ headers มาใช้เฉพาะเมื่อ routing ขึ้นกับ attribute อิสระหลายตัวจริง ๆ
+
+## เลือก exchange type
+
+การตัดสินใจ routing ส่วนใหญ่จบได้ในตารางสั้น ๆ จับสิ่งที่คุณต้องการเข้ากับ type ที่ง่ายที่สุดที่สื่อสิ่งนั้น:
+
+| สิ่งที่คุณต้องการ | exchange type | ทำอย่างไร |
+|---------------|---------------|-----|
+| ปลายทางหมวดเดียวชัด ๆ ต่อ message | **direct** | bind ด้วย routing key เป๊ะ |
+| broadcast ทุก message ไปทุก subscriber | **fanout** | subscriber แต่ละตัว bind queue ของตัวเอง |
+| subscriber filter ด้วย pattern ยืดหยุ่น | **topic** | bind ด้วย pattern `*` / `#` บน key แบบ dotted |
+| route จาก attribute อิสระหลายตัว | **headers** | bind ด้วยเงื่อนไข header + `x-match` |
+
+หลักคิดคร่าว ๆ:
+
+- **เริ่มจาก type ที่ง่ายที่สุดที่ใช้ได้** ถ้า key เป๊ะตัวเดียวพอ ก็ใช้ `direct` อย่าเผื่อไปหยิบ `topic` แบบเก็งกำไร
+- **event bus ให้ default เป็น `topic`** มันครอบคลุม direct และ fanout คุณจึงเหลือที่เพิ่ม subscriber ที่ละเอียดขึ้นได้โดยไม่ต้องแก้ producer
+- **เลี่ยง `headers` เว้นแต่จำเป็นจริง ๆ** routing key แบบ dotted ที่ดีเกือบทุกครั้งเอาชนะมันเรื่องความชัดและความเร็ว
+- **ออกแบบ routing-key scheme แต่เนิ่น ๆ** `domain.detail.action` (เช่น `order.eu.created`) คือ convention ที่ควรตกลงกันก่อน producer ตัวแรกจะขึ้น
+
+<Callout title="สรุปหนึ่งบรรทัด">
+headers exchange route จากค่า header ด้วย `x-match: all`/`any` แทน routing key — ทรงพลังแต่ไม่ค่อยจำเป็น เพราะ topic key ที่ดีมักสื่อสิ่งเดียวกันได้ง่ายกว่า เวลาเลือก: `direct` สำหรับหมวดที่เป๊ะ, `fanout` เพื่อ broadcast, `topic` สำหรับ filter แบบ pattern ยืดหยุ่น (default ที่ดีของ event bus) และ `headers` เฉพาะ routing หลาย attribute จริง ๆ
+</Callout>
+
+export const quizHeaders = [
+  {
+    q: 'headers exchange route จากอะไร?',
+    options: [
+      'routing key แบบ match เป๊ะ',
+      'คู่ key/value ของ header ใน message ด้วย x-match all หรือ any',
+      'เนื้อหาใน message body',
+      'ชื่อ queue',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'headers binding ใช้ "x-match: any" message จะ match เมื่อมัน:',
+    options: [
+      'มี header ครบทุกตัวของ binding',
+      'มี header อย่างน้อยหนึ่งตัวของ binding',
+      'ไม่มี header ของ binding เลย',
+      'มี routing key ที่ตรงกันด้วย',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'exchange type ไหนเป็น default ที่ดีที่สุดสำหรับ event bus ที่ยืดหยุ่น?',
+    options: [
+      'direct',
+      'fanout',
+      'topic',
+      'headers',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'ทำไม headers exchange ถึงถูกใช้น้อยในทางปฏิบัติ?',
+    options: [
+      'มันตั้ง durable ไม่ได้',
+      'routing key แบบ topic ที่ออกแบบดีมักสื่อเจตนาเดียวกันได้ง่ายกว่าและ match เร็วกว่า',
+      'มันรองรับ binding ได้ตัวเดียว',
+      'มันทิ้ง message ที่ไม่มี header',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="exchanges-and-routing/headers-and-choosing" questions={quizHeaders} />
+
+<ProgressTracker client:visible id="exchanges-and-routing/headers-and-choosing" />

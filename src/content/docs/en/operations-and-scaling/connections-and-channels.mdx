@@ -1,0 +1,154 @@
+---
+title: 'Connections & Channels'
+description: 'Production connection management — one connection per process, a channel per worker, heartbeats, and automatic recovery when the network blips.'
+sidebar:
+  order: 3
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The number-one production mistake
+
+More production RabbitMQ incidents come from **connection misuse** than from anything else. A TCP connection with its TLS handshake and AMQP negotiation is expensive to open. Code that opens a connection per message — or per request — floods the broker with churn, exhausts file descriptors, and falls over under load.
+
+The rule from the foundations module, restated for production:
+
+> **One long-lived connection per process. Many channels over it — one per worker or concurrent task. Channels are not thread-safe.**
+
+<Mermaid title="The correct shape: one connection, many channels, one channel per worker" code={shapeDiagram} />
+
+export const shapeDiagram = `flowchart LR
+  app["App process"] --> conn["1 long-lived\nconnection"]
+  conn --> ch1["Channel → worker 1"]
+  conn --> ch2["Channel → worker 2"]
+  conn --> ch3["Channel → worker 3"]
+  ch1 --> broker["RabbitMQ"]
+  ch2 --> broker
+  ch3 --> broker`;
+
+## Heartbeats keep connections honest
+
+A connection can look alive at the TCP level while the peer is actually gone (a crashed node, a silent network drop). **Heartbeats** are periodic frames both sides exchange; if several are missed, the connection is considered dead and torn down. This lets a client detect a broken broker in seconds instead of waiting for a TCP timeout that can take minutes. Keep the default heartbeat on — turning it off is how "zombie" connections happen.
+
+## Automatic recovery
+
+Networks blip. A robust client does not crash when a connection drops — it **reconnects**, then re-declares its topology (queues, exchanges, bindings) and re-establishes its consumers. Most clients offer this, but you must design for it: a redelivered message may arrive after recovery, so your consumers still need to be idempotent.
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    import amqp from 'amqplib';
+
+    // amqplib has no built-in recovery — wrap connect with retry.
+    async function connectWithRetry(url, attempt = 0) {
+      try {
+        const conn = await amqp.connect(url, { heartbeat: 30 });
+        conn.on('error', (e) => console.error('conn error', e.message));
+        conn.on('close', () => setTimeout(() => connectWithRetry(url), 2000));
+        return conn;
+      } catch (e) {
+        const delay = Math.min(2 ** attempt * 500, 30000);
+        console.warn(`connect failed, retry in ${delay}ms`);
+        await new Promise((r) => setTimeout(r, delay));
+        return connectWithRetry(url, attempt + 1);
+      }
+    }
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    import pika
+
+    # pika's SelectConnection supports recovery; BlockingConnection needs a retry loop.
+    params = pika.ConnectionParameters(
+        host="localhost",
+        heartbeat=30,
+        connection_attempts=5,
+        retry_delay=2,          # seconds between attempts
+        blocked_connection_timeout=300,
+    )
+    conn = pika.BlockingConnection(params)
+    channel = conn.channel()   # re-declare topology after any reconnect
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    // amqp091-go has no auto-recovery — loop on the connection's NotifyClose.
+    for {
+        conn, err := amqp.DialConfig("amqp://guest:guest@localhost:5672/",
+            amqp.Config{Heartbeat: 30 * time.Second})
+        if err != nil {
+            time.Sleep(2 * time.Second)
+            continue
+        }
+        closed := conn.NotifyClose(make(chan *amqp.Error, 1))
+        runWorkers(conn)     // declare topology + consumers here
+        <-closed             // block until the connection drops, then reconnect
+        log.Println("connection lost, reconnecting...")
+    }
+    ```
+  </TabItem>
+</Tabs>
+
+## A short production checklist
+
+- **One connection per process**, reused for the app's lifetime.
+- **One channel per worker/goroutine/thread** — never share a channel across threads.
+- **Separate the publisher channel from consumer channels** (a channel error, like publishing to a missing exchange, closes the whole channel).
+- **Keep heartbeats on** so dead connections are detected quickly.
+- **Reconnect with backoff** and re-declare topology + consumers on recovery.
+
+<Callout title="The one-line takeaway">
+Connection churn is the top production failure mode: open **one long-lived connection per process**, put **one channel per worker** over it (channels aren't thread-safe), and keep **heartbeats** on so dead connections are caught in seconds. Design for the network to blip — **reconnect with backoff**, re-declare your topology and consumers, and keep consumers idempotent because recovery can redeliver.
+</Callout>
+
+export const quizConn = [
+  {
+    q: 'What is the most common production mistake with RabbitMQ connections?',
+    options: [
+      'Using TLS',
+      'Opening a connection per message or per request, causing churn that exhausts the broker',
+      'Declaring queues as durable',
+      'Using more than one exchange',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What do heartbeats accomplish?',
+    options: [
+      'They compress messages',
+      'They let a client detect a dead connection in seconds instead of waiting for a TCP timeout',
+      'They acknowledge messages automatically',
+      'They replicate queues',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'After an automatic reconnection, what must a robust client do?',
+    options: [
+      'Nothing — the broker restores everything',
+      'Re-declare its topology (queues, exchanges, bindings) and re-establish consumers',
+      'Delete all queues and start over',
+      'Switch to a new broker',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why keep publisher and consumer work on separate channels?',
+    options: [
+      'It is required by AMQP',
+      'A channel-level error closes the entire channel, so isolating roles limits the blast radius',
+      'Channels can only do one of publish or consume',
+      'It doubles throughput automatically',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="operations-and-scaling/connections-and-channels" questions={quizConn} />
+
+<ProgressTracker client:visible id="operations-and-scaling/connections-and-channels" />

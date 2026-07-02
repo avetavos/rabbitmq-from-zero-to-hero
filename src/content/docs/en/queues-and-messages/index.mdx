@@ -1,0 +1,80 @@
+---
+title: 'Queues & Messages'
+description: 'Queue and message properties, acknowledgements, prefetch/QoS, and TTL & limits — the knobs that turn a working queue into a reliable, well-behaved one.'
+sidebar:
+  order: 1
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## From "it works" to "it behaves"
+
+In the first module you published a message and consumed it. That flow works — but it makes a lot of quiet decisions for you: the queue disappears on restart, the message lives only in memory, one consumer might hog everything, and messages pile up forever if nobody reads them.
+
+This module is about the **knobs**. Each one is a small property on a queue or a message that changes what happens under load, on failure, and on restart.
+
+## What this module covers
+
+| Lesson | What you'll learn |
+|--------|-------------------|
+| Queue properties | `durable`, `exclusive`, `auto-delete`, and `x-*` arguments |
+| Message properties | Persistence, content type, headers, priority, and correlation |
+| Acknowledgements | Manual vs auto ack, requeue, and at-least-once delivery |
+| Prefetch & QoS | Fair dispatch, and why unbounded prefetch overloads one worker |
+| TTL & limits | Message/queue expiry, max length, and overflow behaviour |
+
+## Two objects, two sets of knobs
+
+Everything here lives on one of two things — the **queue** (declared once, shared by everyone) or the **message** (set fresh on every publish):
+
+<Mermaid title="Where the knobs live" code={knobsDiagram} />
+
+export const knobsDiagram = `flowchart LR
+  q["Queue properties\n(durable, exclusive,\nauto-delete, TTL, max-length)"] --> life["shape the queue's\nlifecycle & limits"]
+  m["Message properties\n(persistent, priority,\nheaders, content-type)"] --> deliv["shape one message's\ndelivery & handling"]`;
+
+Getting these right is most of what separates a demo from a system you'd trust in production. The single most important one — acknowledgements — is the mechanism behind "at-least-once" delivery, so give that lesson extra attention.
+
+<Callout title="The mental shift">
+A queue is not just a bucket — it's a bucket with a **policy**. Durability decides what survives a crash, acknowledgements decide when a message is truly "done", prefetch decides how work is shared, and TTL/limits decide what happens when consumers can't keep up. You choose these deliberately; the defaults are rarely what production wants.
+</Callout>
+
+export const quizIndex = [
+  {
+    q: 'What do queue and message properties fundamentally control?',
+    options: [
+      'The network port RabbitMQ listens on',
+      'How the system behaves under load, on failure, and on restart',
+      'The programming language of the consumer',
+      'The colour of the management UI',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Where do "queue properties" versus "message properties" apply?',
+    options: [
+      'Both are set once on the connection',
+      'Queue properties are set when declaring the queue; message properties are set on each publish',
+      'They are the same thing',
+      'Message properties are set by the broker, not the client',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Which knob is the mechanism behind at-least-once delivery?',
+    options: [
+      'The queue name',
+      'Acknowledgements',
+      'The content type',
+      'The exchange type',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="queues-and-messages/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="queues-and-messages/index" />

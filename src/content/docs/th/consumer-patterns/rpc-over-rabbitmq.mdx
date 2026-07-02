@@ -1,0 +1,164 @@
+---
+title: 'RPC over RabbitMQ'
+description: 'request/reply บน messaging ด้วย correlation_id และ reply_to — มันทำงานอย่างไร และคำถามตรง ๆ ว่าคุณควรทำมันไหม'
+sidebar:
+  order: 4
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ขอคำตอบกลับผ่าน queue
+
+messaging เป็น fire-and-forget โดยธรรมชาติ — แต่บางครั้งคุณอยากได้ **คำตอบกลับ** RabbitMQ รองรับ pattern request/reply (RPC) ด้วย message property สองตัวที่คุณเจอมาแล้ว:
+
+- **`reply_to`** — client สร้าง **callback queue** แล้วใส่ชื่อมันตรงนี้ บอก server ว่า "ส่งคำตอบไปที่ queue นี้"
+- **`correlation_id`** — id ที่ไม่ซ้ำที่ client แนบกับแต่ละ request และคาดว่าจะได้ echo กลับมา เพื่อจับคู่ reply กับ request ที่ทำให้เกิดมัน (reply อาจมาไม่เรียงลำดับ)
+
+<Mermaid title="RPC round-trip ที่จับคู่ด้วย correlation_id" code={rpcDiagram} />
+
+export const rpcDiagram = `sequenceDiagram
+  participant C as Client
+  participant RQ as rpc_queue
+  participant S as Server
+  participant CB as callback queue
+  C->>RQ: request (reply_to=cb, correlation_id=abc)
+  RQ->>S: deliver
+  S->>S: compute result
+  S->>CB: reply (correlation_id=abc)
+  CB->>C: deliver
+  Note over C: match abc to the pending request`;
+
+## สองฝั่ง
+
+**server** consume จาก request queue ที่รู้จักกันดี ทำงาน แล้ว publish ผลลัพธ์ไปที่ `reply_to` queue ของ request โดย echo `correlation_id` กลับ ส่วน **client** publish request พร้อม `correlation_id` ใหม่และ `reply_to` แล้วรอบน callback queue ของตัวเองเพื่อรับ reply ที่มี id ตัวเดียวกันนั้น
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    // Server
+    await channel.assertQueue('rpc_queue', { durable: false });
+    await channel.prefetch(1);
+    channel.consume('rpc_queue', (msg) => {
+      const n = parseInt(msg.content.toString(), 10);
+      const result = Buffer.from(String(fib(n)));
+      channel.sendToQueue(msg.properties.replyTo, result, {
+        correlationId: msg.properties.correlationId,
+      });
+      channel.ack(msg);
+    });
+
+    // Client (sketch)
+    const { queue: cbQueue } = await channel.assertQueue('', { exclusive: true });
+    const correlationId = randomUUID();
+    channel.consume(cbQueue, (msg) => {
+      if (msg.properties.correlationId === correlationId) {
+        console.log('result:', msg.content.toString());
+      }
+    }, { noAck: true });
+    channel.sendToQueue('rpc_queue', Buffer.from('30'), {
+      correlationId, replyTo: cbQueue,
+    });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    # Server
+    channel.queue_declare(queue="rpc_queue")
+    channel.basic_qos(prefetch_count=1)
+    def on_request(ch, method, props, body):
+        result = str(fib(int(body)))
+        ch.basic_publish(
+            exchange="", routing_key=props.reply_to,
+            properties=pika.BasicProperties(correlation_id=props.correlation_id),
+            body=result,
+        )
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+    channel.basic_consume(queue="rpc_queue", on_message_callback=on_request)
+
+    # Client (sketch)
+    cb = channel.queue_declare(queue="", exclusive=True).method.queue
+    corr_id = str(uuid.uuid4())
+    channel.basic_publish(
+        exchange="", routing_key="rpc_queue",
+        properties=pika.BasicProperties(reply_to=cb, correlation_id=corr_id),
+        body="30",
+    )
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    // Server
+    ch.QueueDeclare("rpc_queue", false, false, false, false, nil)
+    ch.Qos(1, 0, false)
+    msgs, _ := ch.Consume("rpc_queue", "", false, false, false, false, nil)
+    for d := range msgs {
+        result := strconv.Itoa(fib(atoi(d.Body)))
+        ch.PublishWithContext(ctx, "", d.ReplyTo, false, false, amqp.Publishing{
+            CorrelationId: d.CorrelationId,
+            Body:          []byte(result),
+        })
+        d.Ack(false)
+    }
+
+    // Client (sketch)
+    cb, _ := ch.QueueDeclare("", false, false, true, false, nil)
+    corrId := uuid.NewString()
+    ch.PublishWithContext(ctx, "", "rpc_queue", false, false, amqp.Publishing{
+        ReplyTo:       cb.Name,
+        CorrelationId: corrId,
+        Body:          []byte("30"),
+    })
+    ```
+  </TabItem>
+</Tabs>
+
+## คุณควรทำแบบนี้จริงไหม?
+
+ถามตัวเองตรง ๆ ก่อนจะหยิบ RPC-over-RabbitMQ มาใช้ คุณกำลัง **สร้าง synchronous call ขึ้นมาใหม่บน async infrastructure** — พร้อม callback queue, การจัดการ correlation และ timeout handling ของตัวเอง — เพื่อให้ได้สิ่งที่ HTTP หรือ gRPC call ธรรมดาให้ฟรี ๆ สำหรับ request/reply ส่วนใหญ่ direct call ง่ายกว่า debug ง่ายกว่า และ latency ต่ำกว่า
+
+RPC-over-messaging คุ้มเมื่อคุณอยากได้สิ่งที่ broker เพิ่มให้จริง ๆ: **load-balance request ข้าม pool ของ worker** (RPC server หลายตัวแข่งกันบน `rpc_queue`), **location transparency** (client ไม่รู้และไม่สนว่า worker ตัวไหนตอบ), หรือ **buffering** request ตอน worker ยุ่งชั่วครู่ ถ้าคุณไม่ต้องการสิ่งเหล่านี้ ก็อย่าสร้างมัน
+
+<Callout title="The one-line takeaway">
+RPC over RabbitMQ ใช้ `reply_to` (ส่งคำตอบไปที่ไหน) และ `correlation_id` (จับคู่คำตอบกับ request) เพื่อจำลอง request/reply บน async infra มันทำงานได้ และให้ load-balancing กับ location transparency ข้าม worker pool — แต่คุณกำลัง re-implement สิ่งที่ HTTP/gRPC ให้ฟรี ดังนั้นเลือก direct synchronous call ก่อน เว้นแต่คุณต้องการ fan-out และ buffering ของ broker จริง ๆ
+</Callout>
+
+export const quizRpc = [
+  {
+    q: 'บทบาทของ correlation_id ใน RPC over RabbitMQ คืออะไร?',
+    options: [
+      'บีบอัด request',
+      'ให้ client จับคู่ reply กลับไปยัง request ที่ทำให้เกิดมัน',
+      'ตั้งชื่อ reply queue',
+      'ตั้ง TTL ของ message',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'property reply_to บอกอะไรกับ server?',
+    options: [
+      'priority ของ response',
+      'queue ที่จะ publish คำตอบไป',
+      'client จะรอนานแค่ไหน',
+      'routing key ของ request',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'เมื่อไรที่ RPC over RabbitMQ คุ้มจริงแทน direct HTTP/gRPC call?',
+    options: [
+      'เสมอ — มันเร็วกว่า HTTP',
+      'เมื่อคุณอยาก load-balance request ข้าม pool ของ worker พร้อม location transparency และ buffering',
+      'เมื่อ payload เป็น JSON',
+      'เมื่อคุณมี server แค่ตัวเดียว',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="consumer-patterns/rpc-over-rabbitmq" questions={quizRpc} />
+
+<ProgressTracker client:visible id="consumer-patterns/rpc-over-rabbitmq" />

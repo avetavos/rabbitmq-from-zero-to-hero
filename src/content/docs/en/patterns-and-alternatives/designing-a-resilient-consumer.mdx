@@ -1,0 +1,203 @@
+---
+title: 'Designing a Resilient Consumer'
+description: 'The capstone — assemble durability, manual acks, sensible prefetch, idempotency, retry, connection recovery, and graceful shutdown into a production-grade consumer.'
+sidebar:
+  order: 5
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Everything, at once
+
+Each reliability lesson gave you one safety net. A production consumer needs all of them working together. This capstone assembles them into a single design you can adapt.
+
+## The checklist
+
+A consumer you can trust in production has these properties:
+
+1. **Durable queue + persistent messages** — so a broker restart doesn't lose work.
+2. **Manual acknowledgement** — ack only *after* the work succeeds, so a crash mid-task redelivers.
+3. **Sensible prefetch** — a bounded `prefetch` (say 10–50) so one consumer isn't handed thousands of unacked messages.
+4. **Idempotent processing** — because delivery is at-least-once, the same message can arrive twice; make handling it twice harmless (dedupe on a message id).
+5. **Retry with backoff, then park** — on failure, `nack` without immediate requeue; route through a TTL + dead-letter retry queue; after N attempts, send to a **parking** (dead) queue for a human.
+6. **Connection recovery** — reconnect automatically when the broker connection drops, and re-declare topology.
+7. **Graceful shutdown** — on SIGTERM, stop accepting new deliveries, finish in-flight work (and ack it), *then* close the channel and connection.
+8. **Observability** — log and emit metrics for processed, retried, and parked messages so you can see failures.
+
+## The flow, with every net in place
+
+<Mermaid title="A resilient consumer's handling of one message" code={resilientDiagram} />
+
+export const resilientDiagram = `flowchart TB
+  deliver["Message delivered\n(prefetch-bounded)"] --> dedupe{"Seen this id?"}
+  dedupe -->|yes| ackdup["ack (idempotent skip)"]
+  dedupe -->|no| work["Process work"]
+  work -->|success| ack["ack"]
+  work -->|failure| retry{"Attempts < N?"}
+  retry -->|yes| ttl["nack -> retry queue (TTL) -> back to main"]
+  retry -->|no| park["route to parking queue\n(alert a human)"]`;
+
+## A robust consumer skeleton
+
+The details differ per client, but the shape is the same everywhere: bounded prefetch, manual ack on success, dead-letter on repeated failure, and a shutdown hook.
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    import amqp from 'amqplib';
+
+    const conn = await amqp.connect('amqp://localhost');
+    const channel = await conn.createChannel();
+
+    await channel.assertQueue('tasks', { durable: true });
+    channel.prefetch(20); // bounded in-flight work
+
+    channel.consume('tasks', async (msg) => {
+      if (!msg) return;
+      const id = msg.properties.messageId;
+      try {
+        if (await alreadyProcessed(id)) { channel.ack(msg); return; } // idempotent
+        await doWork(msg.content);
+        await markProcessed(id);
+        channel.ack(msg);                       // ack only after success
+      } catch (err) {
+        const attempts = (msg.properties.headers?.['x-attempts'] ?? 0) + 1;
+        if (attempts >= 5) channel.nack(msg, false, false); // -> DLX/parking
+        else republishToRetryQueue(channel, msg, attempts); // TTL + DLX retry
+        channel.ack(msg);                        // remove the original
+      }
+    });
+
+    process.on('SIGTERM', async () => {         // graceful shutdown
+      await channel.close();
+      await conn.close();
+      process.exit(0);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    import pika, signal
+
+    conn = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
+    channel = conn.channel()
+    channel.queue_declare(queue="tasks", durable=True)
+    channel.basic_qos(prefetch_count=20)          # bounded in-flight work
+
+    def on_message(ch, method, props, body):
+        msg_id = props.message_id
+        try:
+            if already_processed(msg_id):          # idempotent
+                ch.basic_ack(method.delivery_tag); return
+            do_work(body)
+            mark_processed(msg_id)
+            ch.basic_ack(method.delivery_tag)       # ack only after success
+        except Exception:
+            attempts = (props.headers or {}).get("x-attempts", 0) + 1
+            if attempts >= 5:
+                ch.basic_nack(method.delivery_tag, requeue=False)  # -> DLX/parking
+            else:
+                republish_to_retry_queue(ch, body, props, attempts)  # TTL + DLX
+                ch.basic_ack(method.delivery_tag)
+
+    channel.basic_consume(queue="tasks", on_message_callback=on_message)
+
+    def shutdown(*_):                              # graceful shutdown
+        channel.stop_consuming(); conn.close()
+    signal.signal(signal.SIGTERM, shutdown)
+    channel.start_consuming()
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    conn, _ := amqp.Dial("amqp://guest:guest@localhost:5672/")
+    defer conn.Close()
+    ch, _ := conn.Channel()
+    defer ch.Close()
+
+    ch.QueueDeclare("tasks", true, false, false, false, nil) // durable
+    ch.Qos(20, 0, false)                                     // bounded prefetch
+    msgs, _ := ch.Consume("tasks", "", false, false, false, false, nil)
+
+    go func() {
+        for d := range msgs {
+            id, _ := d.MessageId, d.Headers
+            if alreadyProcessed(id) { d.Ack(false); continue } // idempotent
+            if err := doWork(d.Body); err != nil {
+                attempts := attemptCount(d.Headers) + 1
+                if attempts >= 5 {
+                    d.Nack(false, false)                       // -> DLX/parking
+                } else {
+                    republishToRetryQueue(ch, d, attempts)     // TTL + DLX
+                    d.Ack(false)
+                }
+                continue
+            }
+            markProcessed(id)
+            d.Ack(false)                                       // ack after success
+        }
+    }()
+
+    <-ctx.Done() // graceful shutdown: stop, finish in-flight, then close
+    ```
+  </TabItem>
+</Tabs>
+
+## The habits that matter most
+
+If you remember only three things from this whole course, make them these: **ack after success, never before** (it's the difference between losing work and not); **make processing idempotent** (because at-least-once guarantees duplicates); and **never requeue a poison message in a tight loop** (use TTL + dead-letter retry and a parking queue). Everything else is refinement on those three.
+
+<Callout title="The one-line takeaway">
+A resilient consumer combines every reliability lesson: durable queue + persistent messages, **manual ack after success**, bounded prefetch, **idempotent** processing (duplicates are guaranteed), retry via TTL + dead-letter with a parking queue after N attempts, automatic connection recovery, and **graceful shutdown** that finishes in-flight work before closing. Ack-after-success, idempotency, and no tight poison loops are the three habits that carry the most weight.
+</Callout>
+
+export const quizResilient = [
+  {
+    q: 'When should a resilient consumer acknowledge a message?',
+    options: [
+      'Immediately on delivery, before processing',
+      'Only after the work has succeeded',
+      'Never — rely on auto-ack',
+      'Before opening the channel',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why must processing be idempotent?',
+    options: [
+      'Because messages are encrypted',
+      'Because at-least-once delivery means the same message can arrive more than once',
+      'Because prefetch requires it',
+      'To make messages smaller',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is the safe way to handle a message that keeps failing?',
+    options: [
+      'Requeue it immediately in a tight loop',
+      'Drop it silently',
+      'Retry with a TTL + dead-letter delay, then park it after N attempts for a human',
+      'Ack it and pretend it succeeded',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'What should graceful shutdown do on SIGTERM?',
+    options: [
+      'Kill the process immediately, abandoning in-flight work',
+      'Stop accepting new deliveries, finish and ack in-flight work, then close',
+      'Purge the queue',
+      'Requeue every unacked message twice',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="patterns-and-alternatives/designing-a-resilient-consumer" questions={quizResilient} />
+
+<ProgressTracker client:visible id="patterns-and-alternatives/designing-a-resilient-consumer" />

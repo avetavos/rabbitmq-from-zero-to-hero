@@ -1,0 +1,99 @@
+---
+title: 'RabbitMQ Streams'
+description: 'An append-only, replayable log built into RabbitMQ — non-destructive reads with offsets, a Kafka-like model without leaving RabbitMQ, and when to use a stream over a queue.'
+sidebar:
+  order: 4
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## A log inside RabbitMQ
+
+The previous lesson framed RabbitMQ and Kafka as opposites — a delete-on-ack queue versus a retained log. **RabbitMQ Streams** blur that line: they bring a Kafka-like **append-only log** *into* RabbitMQ, so you can get replay and high fan-out without adding a second system.
+
+A stream is a queue type (declared with `x-queue-type: stream`), but it behaves very differently from a classic queue:
+
+- Messages are **appended to a log** and **retained**, not deleted when read.
+- Reads are **non-destructive** — consuming does not remove anything.
+- Each consumer reads from an **offset** it controls, and can start from the beginning, the end, a timestamp, or a saved position.
+- Many consumers can read the **same** stream independently and at different speeds.
+
+<Mermaid title="A stream: one retained log, many consumers at their own offset" code={streamDiagram} />
+
+export const streamDiagram = `flowchart LR
+  prod["Producer"] -->|append| log["Stream log\n[0][1][2][3][4][5]"]
+  log --> c1["Consumer A\noffset 1 (replaying)"]
+  log --> c2["Consumer B\noffset 5 (live)"]
+  log --> c3["Consumer C\nfrom timestamp"]`;
+
+## Stream versus classic queue
+
+| | Classic queue | Stream |
+|--|---------------|--------|
+| **On read** | Removed after ack | Retained (non-destructive) |
+| **Replay** | No | Yes — reset the offset |
+| **Multiple readers of same data** | Compete for messages | Each reads the whole log independently |
+| **Retention** | Until consumed | Time or size based (e.g. keep 7 days) |
+| **Best at** | Task distribution, per-message work | Event fan-out, replay, large-scale reads |
+
+Because a stream keeps data, you declare **retention** — by time or total size — rather than relying on consumption to clear it. Old segments are truncated once they age out.
+
+## When to use a stream
+
+Choose a **stream** when you want a Kafka-like log but would rather not run Kafka: you need **replay**, you have **many consumers reading the same events**, or you're ingesting a **high-throughput firehose** and want time-based retention. There's also a **super stream** — a partitioned stream — for scaling a single logical stream across nodes, much like Kafka partitions.
+
+Stay with a **classic (or quorum) queue** when the message is a **task done once and discarded**, when you need per-message routing and retry, or when you don't need history. Most task-distribution and RPC work still wants a queue, not a stream.
+
+<Callout title="The one-line takeaway">
+RabbitMQ Streams add an **append-only, replayable log** to RabbitMQ: reads are non-destructive, each consumer controls its own **offset**, and data is kept by a **retention** policy rather than deleted on ack. Use a stream when you'd otherwise reach for Kafka — replay, many readers of the same events, high-throughput fan-out — and stick with a queue for discrete tasks.
+</Callout>
+
+export const quizStreams = [
+  {
+    q: 'What happens to a message in a RabbitMQ stream when a consumer reads it?',
+    options: [
+      'It is deleted immediately',
+      'It is retained — reads are non-destructive',
+      'It is moved to a dead-letter exchange',
+      'It is sent back to the producer',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'How does a consumer choose where to start reading a stream?',
+    options: [
+      'It always starts from the newest message only',
+      'By an offset it controls — beginning, end, a timestamp, or a saved position',
+      'The broker picks randomly',
+      'Streams do not support choosing a position',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'How is data cleared from a stream?',
+    options: [
+      'It is removed as soon as one consumer acks',
+      'By a retention policy based on time or size',
+      'It is never cleared',
+      'The producer must delete each message',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Which workload still belongs on a classic/quorum queue rather than a stream?',
+    options: [
+      'A high-throughput event firehose with replay',
+      'Many consumers reading the same event history',
+      'Discrete background tasks done once and discarded, needing per-message retry',
+      'Event fan-out to systems at different speeds',
+    ],
+    answer: 2,
+  },
+];
+
+<Quiz client:visible id="patterns-and-alternatives/streams" questions={quizStreams} />
+
+<ProgressTracker client:visible id="patterns-and-alternatives/streams" />

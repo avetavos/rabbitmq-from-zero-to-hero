@@ -1,0 +1,152 @@
+---
+title: 'Dead-Letter Exchanges'
+description: 'message ไปไหนเมื่อ process ไม่ได้ — trigger ของ dead-lettering, การตั้ง DLX, จัดการ poison message และ pattern delayed-retry ด้วย TTL+DLX'
+sidebar:
+  order: 3
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ปัญหา: message ที่ process ไม่ได้
+
+consumer ดึง message มา พยายาม process แล้ว fail — payload พัง, downstream service ล่ม หรือ record ที่มันอ้างถึงไม่มีอยู่ แล้วยังไงต่อ?
+
+ถ้าคุณ **nack แบบ requeue** RabbitMQ จะเอามันกลับไปไว้หน้า queue คุณดึงมันมาอีก มัน fail อีก แล้วคุณก็ได้ **poison message** วนอยู่ในลูปแน่น ๆ เผา CPU และ block ทุกอย่างที่อยู่ข้างหลัง ถ้าคุณแค่ **drop** มันทิ้ง คุณก็ทำข้อมูลหายแบบเงียบ ๆ ทั้งสองอย่างรับไม่ได้
+
+ทางออกคือส่ง message ที่ fail ไปที่อื่นโดยตั้งใจ "ที่อื่น" นั้นคือ **dead-letter exchange (DLX)**
+
+## อะไรทำให้ message ถูก dead-letter
+
+message จะถูก dead-letter — route ไปยัง DLX ที่ตั้งไว้ของ queue — เมื่อเกิดกรณีใดกรณีหนึ่ง:
+
+- ถูก **reject หรือ nack แบบ `requeue=false`** (consumer บอกว่า "อย่าเอาอันนี้กลับมาให้ฉัน")
+- **message TTL หมดอายุ** ขณะนั่งอยู่ใน queue
+- queue ชน limit **max-length** และ message ถูก drop เพื่อเปิดที่ว่าง (overflow)
+
+คุณผูก DLX เข้ากับ queue ด้วย argument `x-dead-letter-exchange` (และถ้าต้องการก็ `x-dead-letter-routing-key` เพื่อเปลี่ยน label ตอนออก)
+
+<Mermaid title="message ที่ fail ไหลไปยัง dead-letter queue" code={dlxDiagram} />
+
+export const dlxDiagram = `flowchart LR
+  q["work queue\n(x-dead-letter-exchange: dlx)"] -->|"nack requeue=false\nor TTL expiry\nor overflow"| dlx["DLX (exchange)"]
+  dlx --> dlq["dead-letter queue"]
+  dlq --> ops["ops / inspector\n/ retry logic"]`;
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    await channel.assertExchange('dlx', 'fanout', { durable: true });
+    await channel.assertQueue('orders.dead', { durable: true });
+    await channel.bindQueue('orders.dead', 'dlx', '');
+
+    // the work queue dead-letters to the DLX
+    await channel.assertQueue('orders', {
+      durable: true,
+      arguments: { 'x-dead-letter-exchange': 'dlx' },
+    });
+
+    // in the consumer, reject a bad message WITHOUT requeue → it dead-letters
+    channel.nack(msg, false, false);
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    channel.exchange_declare("dlx", exchange_type="fanout", durable=True)
+    channel.queue_declare("orders.dead", durable=True)
+    channel.queue_bind("orders.dead", "dlx")
+
+    # the work queue dead-letters to the DLX
+    channel.queue_declare("orders", durable=True,
+                          arguments={"x-dead-letter-exchange": "dlx"})
+
+    # reject a bad message WITHOUT requeue → it dead-letters
+    channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    ch.ExchangeDeclare("dlx", "fanout", true, false, false, false, nil)
+    ch.QueueDeclare("orders.dead", true, false, false, false, nil)
+    ch.QueueBind("orders.dead", "", "dlx", false, nil)
+
+    // the work queue dead-letters to the DLX
+    ch.QueueDeclare("orders", true, false, false, false, false, amqp.Table{
+        "x-dead-letter-exchange": "dlx",
+    })
+
+    // reject a bad message WITHOUT requeue → it dead-letters
+    d.Nack(false, false)
+    ```
+  </TabItem>
+</Tabs>
+
+## Poison message: ยอมแพ้อย่างสง่างาม
+
+ไม่ใช่ทุกอย่างควร retry ตลอดไป message ที่จะ *ไม่มีวัน* สำเร็จ — schema พัง, อ้างถึงสิ่งที่ไม่มีอยู่แล้ว — คือ **poison message** pattern คือ: นับว่า message ถูกลองมากี่ครั้ง (counter ใน header หรือ record `x-death` ที่ RabbitMQ เพิ่มให้ทุกครั้งที่ dead-letter) แล้วหลังจาก N ครั้งก็ route ไปยัง **parking** (หรือ "dead") queue ที่คนหรือ alert เข้าไปดูได้ อย่าปล่อยให้ poison message วนลูป
+
+## TTL + DLX = delayed retry
+
+นี่คือทริกฉลาด ๆ ที่ dead-lettering ปลดล็อก บางที failure เป็นแบบ *ชั่วคราว* — downstream service ล่มแป๊บเดียว — และคุณอยากลองใหม่ แต่ **ไม่ใช่ทันที** คุณอยากรอ 30 วินาทีแล้วค่อยลอง
+
+รวม **message/queue TTL** กับ **DLX**:
+
+1. เมื่อ fail ก็ publish message ไปยัง **retry queue** ที่มี TTL 30 วินาที และมี DLX ชี้กลับไปยัง main exchange
+2. message นั่งอยู่ใน retry queue เฉย ๆ 30 วินาที
+3. เมื่อ TTL หมด RabbitMQ จะ dead-letter มัน — ซึ่ง route มัน **กลับไปยัง main queue** เพื่อลองอีกครั้ง
+
+คุณสร้าง delayed retry พร้อม backoff ด้วย queue config ล้วน ๆ — ไม่ต้องมี scheduler ไม่ต้อง `sleep` ใน consumer (โมดูล Consumer Patterns จะต่อยอดเป็น retry ladder เต็ม ๆ)
+
+<Callout title="สรุปหนึ่งบรรทัด">
+**dead-letter exchange** คือที่ที่ message ไปเมื่อถูก reject โดยไม่ requeue, หมดอายุด้วย TTL หรือ overflow queue ที่เต็ม — แทนที่จะวนเป็น poison หรือหายไป route failure ไปยัง dead-letter queue เพื่อตรวจสอบ, จำกัด retry ด้วย counter ก่อน park poison message และรวม **TTL + DLX** เพื่อสร้าง delayed retry โดยไม่ต้องมี infrastructure เพิ่ม
+</Callout>
+
+export const quizDlx = [
+  {
+    q: 'ทำไม nack message ที่ fail แบบ requeue=true ถึงอันตราย?',
+    options: [
+      'มันลบ queue ทิ้ง',
+      'มัน re-deliver message ทันที เกิดลูป poison message แน่น ๆ ที่ fail ซ้ำ ๆ',
+      'มันปิด acknowledgement',
+      'มันส่ง message ไปทุก consumer พร้อมกัน',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ข้อใดที่ *ไม่* ทำให้ message ถูก dead-letter?',
+    options: [
+      'reject/nack มันแบบ requeue=false',
+      'message TTL ของมันหมดอายุใน queue',
+      'queue overflow เกิน max-length',
+      'ack มันสำเร็จ',
+    ],
+    answer: 3,
+  },
+  {
+    q: 'จัดการ poison message ที่จะไม่มีวันสำเร็จอย่างไร?',
+    options: [
+      'requeue มันตลอดไป',
+      'นับจำนวนครั้ง แล้วหลัง N ครั้งก็ route ไปยัง parking/dead queue ให้คนหรือ alert ดู',
+      'ลบทั้ง queue ทิ้ง',
+      'ปิด DLX',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'TTL + DLX สร้าง delayed retry อย่างไร?',
+    options: [
+      'consumer sleep เป็นเวลาเท่ากับ TTL',
+      'message รออยู่ใน retry queue จนกว่า TTL หมด แล้ว dead-letter กลับไปยัง main queue',
+      'RabbitMQ รัน cron job',
+      'publisher นัด publish ในอนาคต',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="reliability/dead-letter-exchanges" questions={quizDlx} />
+
+<ProgressTracker client:visible id="reliability/dead-letter-exchanges" />

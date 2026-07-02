@@ -1,0 +1,83 @@
+---
+title: 'Exchanges & Routing'
+description: 'The four exchange types — direct, fanout, topic, and headers — and how each decides which queues a published message lands in.'
+sidebar:
+  order: 1
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Routing is the whole job of an exchange
+
+An exchange stores nothing. Its one job is **routing**: take a published message and decide which queues get a copy. *How* it decides is set by the exchange's **type**. Learn the four types and you can express almost any message-flow topology.
+
+## What this module covers
+
+| Lesson | The exchange decides by... |
+|--------|----------------------------|
+| Direct exchange | An **exact** routing key match |
+| Fanout exchange | **Nothing** — it copies to every bound queue |
+| Topic exchange | A **pattern** match on a dotted routing key |
+| Headers & choosing | Message **headers**, plus a guide to picking a type |
+
+## The four types at a glance
+
+<Mermaid title="How each exchange type routes the same message" code={typesDiagram} />
+
+export const typesDiagram = `flowchart TB
+  msg["message\nrouting key: order.created"] --> direct["direct\nmatch key exactly"]
+  msg --> fanout["fanout\nignore key, copy to all"]
+  msg --> topic["topic\nmatch key pattern"]
+  msg --> headers["headers\nmatch on header values"]`;
+
+The mental model to carry through this module:
+
+- A message always carries a **routing key** (a string like `order.created`) and optional **headers**.
+- Each **binding** from an exchange to a queue may carry a **binding key** (or pattern, or header conditions).
+- The exchange type is the **rule** that compares the message against the bindings to pick queues.
+
+Everything else — pub/sub, work distribution, event filtering — is just a choice of exchange type plus some bindings.
+
+<Callout title="The one-line takeaway">
+An exchange routes; it never stores. Its **type** is the routing rule: `direct` matches a routing key exactly, `fanout` copies to every bound queue, `topic` matches a key pattern, and `headers` matches on header values. Pick the type, add bindings, and you've designed your message flow.
+</Callout>
+
+export const quizIndex = [
+  {
+    q: 'What is the single job of an exchange?',
+    options: [
+      'To store messages until consumers are ready',
+      'To route a published message to the right queues',
+      'To acknowledge messages on behalf of consumers',
+      'To compress message bodies',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What determines how an exchange routes a message?',
+    options: [
+      'The size of the message',
+      'The exchange type (direct, fanout, topic, or headers)',
+      'The consumer that will read it',
+      'The order it was published in',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Which exchange type ignores the routing key entirely?',
+    options: [
+      'direct',
+      'topic',
+      'fanout',
+      'headers',
+    ],
+    answer: 2,
+  },
+];
+
+<Quiz client:visible id="exchanges-and-routing/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="exchanges-and-routing/index" />

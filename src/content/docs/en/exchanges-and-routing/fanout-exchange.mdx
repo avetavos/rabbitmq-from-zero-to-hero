@@ -1,0 +1,125 @@
+---
+title: 'Fanout Exchange'
+description: 'Broadcasting a message to every bound queue by ignoring the routing key — the foundation of publish/subscribe.'
+sidebar:
+  order: 3
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Copy to everyone
+
+A **fanout exchange** is the simplest router of all: it **ignores the routing key completely** and copies every message to **every queue bound to it**. One publish, N queues, N independent copies.
+
+This is how you do **broadcast** — or, framed as a pattern, **publish/subscribe**. The producer announces an event once; every interested subscriber has its own queue bound to the exchange and receives its own copy to process independently.
+
+## A worked example: one event, three reactions
+
+When an order is placed, three unrelated things must happen: send a confirmation email, write an audit record, and invalidate a cache. None of them should block the others, and adding a fourth reaction later shouldn't touch the producer. A fanout exchange fits exactly.
+
+<Mermaid title="A fanout exchange copies one message to every bound queue" code={fanoutDiagram} />
+
+export const fanoutDiagram = `flowchart LR
+  p["publish\n'order.placed'"] --> x["fanout exchange\n'orders'"]
+  x --> qe["queue: email"]
+  x --> qa["queue: audit"]
+  x --> qc["queue: cache-invalidation"]`;
+
+Each consumer declares its **own** queue and binds it to the fanout exchange. Because each has a separate queue, one slow subscriber never holds up the others, and each processes at its own pace.
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    const ex = 'orders';
+    await channel.assertExchange(ex, 'fanout', { durable: true });
+
+    // each subscriber: its own queue, bound with NO routing key
+    const q = await channel.assertQueue('email', { durable: true });
+    await channel.bindQueue(q.queue, ex, ''); // key ignored for fanout
+
+    // producer: publish once; routing key is irrelevant
+    channel.publish(ex, '', Buffer.from(JSON.stringify({ orderId: 123 })));
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    ex = "orders"
+    channel.exchange_declare(exchange=ex, exchange_type="fanout", durable=True)
+
+    # each subscriber: its own queue, bound with NO routing key
+    channel.queue_declare(queue="email", durable=True)
+    channel.queue_bind(queue="email", exchange=ex)  # key ignored for fanout
+
+    # producer: publish once; routing key is irrelevant
+    channel.basic_publish(exchange=ex, routing_key="", body='{"orderId": 123}')
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    ex := "orders"
+    ch.ExchangeDeclare(ex, "fanout", true, false, false, false, nil)
+
+    // each subscriber: its own queue, bound with NO routing key
+    ch.QueueDeclare("email", true, false, false, false, nil)
+    ch.QueueBind("email", "", ex, false, nil) // key ignored for fanout
+
+    // producer: publish once; routing key is irrelevant
+    ch.PublishWithContext(ctx, ex, "", false, false,
+        amqp.Publishing{Body: []byte(`{"orderId":123}`)})
+    ```
+  </TabItem>
+</Tabs>
+
+## Fanout vs a work queue
+
+Be careful not to confuse this with a work queue (next module). The difference is where the queue lives:
+
+- **Fanout / pub-sub:** each subscriber has its **own queue**. Everyone gets **every** message. Use it to broadcast an event to independent handlers.
+- **Work queue:** many workers share **one queue**. Each message goes to **one** worker. Use it to distribute tasks.
+
+Same broker, opposite intent — and the deciding factor is simply "one queue shared, or a queue per consumer?"
+
+<Callout title="The one-line takeaway">
+A fanout exchange ignores the routing key and copies each message to **every** bound queue — the mechanism behind publish/subscribe. Give each subscriber its **own** queue and they all receive every event and process independently. (Contrast: a work queue shares one queue so each message goes to just one worker.)
+</Callout>
+
+export const quizFanout = [
+  {
+    q: 'How does a fanout exchange route messages?',
+    options: [
+      'By exact routing-key match',
+      'By ignoring the routing key and copying to every bound queue',
+      'By a wildcard pattern on the routing key',
+      'By message headers',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'To broadcast an event to several independent handlers, each subscriber should:',
+    options: [
+      'Share one queue bound to the fanout exchange',
+      'Declare its own queue and bind it to the fanout exchange',
+      'Use the default exchange',
+      'Publish the message back to the exchange',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What distinguishes fanout/pub-sub from a work queue?',
+    options: [
+      'Fanout is faster',
+      'In fanout each consumer has its own queue and gets every message; a work queue shares one queue and each message goes to one worker',
+      'Work queues cannot use exchanges',
+      'Fanout requires a routing key and work queues do not',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="exchanges-and-routing/fanout-exchange" questions={quizFanout} />
+
+<ProgressTracker client:visible id="exchanges-and-routing/fanout-exchange" />

@@ -1,0 +1,80 @@
+---
+title: 'Queues & Messages'
+description: 'queue และ message properties, acknowledgement, prefetch/QoS และ TTL กับ limit — knob ที่เปลี่ยน queue ที่แค่ทำงานได้ ให้กลายเป็น queue ที่เชื่อถือได้และมีพฤติกรรมดี'
+sidebar:
+  order: 1
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## จาก "มันทำงานได้" ไปสู่ "มันมีพฤติกรรมที่ถูกต้อง"
+
+ในโมดูลแรกคุณ publish message แล้ว consume มัน flow นั้นทำงานได้ก็จริง แต่มันแอบตัดสินใจแทนคุณหลายอย่าง: queue หายไปตอน restart, message อยู่แค่ใน memory, consumer ตัวเดียวอาจกินงานหมด และ message กองพะเนินไปเรื่อย ๆ ถ้าไม่มีใครอ่าน
+
+โมดูลนี้ว่าด้วย **knob** เหล่านั้น แต่ละตัวคือ property เล็ก ๆ บน queue หรือ message ที่เปลี่ยนสิ่งที่จะเกิดขึ้นตอนโหลดหนัก ตอน fail และตอน restart
+
+## โมดูลนี้ครอบคลุมอะไรบ้าง
+
+| บทเรียน | สิ่งที่คุณจะได้เรียนรู้ |
+|--------|-------------------|
+| Queue properties | `durable`, `exclusive`, `auto-delete` และ `x-*` arguments |
+| Message properties | persistence, content type, header, priority และ correlation |
+| Acknowledgements | manual vs auto ack, requeue และ at-least-once delivery |
+| Prefetch & QoS | fair dispatch และทำไม prefetch แบบไม่จำกัดถึงทำให้ worker ตัวเดียวรับงานหนักเกิน |
+| TTL & limits | การ expire ของ message/queue, max length และพฤติกรรมตอน overflow |
+
+## สอง object, สองชุด knob
+
+ทุกอย่างในโมดูลนี้อยู่บนหนึ่งในสองสิ่ง — **queue** (declare ครั้งเดียว ใช้ร่วมกันทุกคน) หรือ **message** (set ใหม่ทุกครั้งที่ publish):
+
+<Mermaid title="knob แต่ละตัวอยู่ที่ไหน" code={knobsDiagram} />
+
+export const knobsDiagram = `flowchart LR
+  q["Queue properties\n(durable, exclusive,\nauto-delete, TTL, max-length)"] --> life["กำหนด lifecycle\nและ limit ของ queue"]
+  m["Message properties\n(persistent, priority,\nheaders, content-type)"] --> deliv["กำหนดการ deliver\nและ handling ของ message หนึ่งตัว"]`;
+
+การตั้งค่าเหล่านี้ให้ถูกคือสิ่งที่แยก demo ออกจากระบบที่คุณกล้าเอาขึ้น production ตัวที่สำคัญที่สุด — acknowledgement — คือกลไกเบื้องหลัง "at-least-once" delivery ดังนั้นให้ความสนใจบทเรียนนั้นเป็นพิเศษ
+
+<Callout title="การปรับมุมมอง">
+queue ไม่ใช่แค่ถังใส่ของ — มันคือถังที่มี **policy** durability ตัดสินว่าอะไรรอดจาก crash, acknowledgement ตัดสินว่าเมื่อไร message ถึงจะ "เสร็จ" จริง, prefetch ตัดสินว่างานถูกแบ่งอย่างไร และ TTL/limit ตัดสินว่าจะเกิดอะไรขึ้นเมื่อ consumer ตามไม่ทัน คุณเลือกค่าเหล่านี้อย่างตั้งใจ เพราะ default มักไม่ใช่สิ่งที่ production ต้องการ
+</Callout>
+
+export const quizIndex = [
+  {
+    q: 'queue และ message properties ควบคุมอะไรเป็นหลัก?',
+    options: [
+      'network port ที่ RabbitMQ listen',
+      'พฤติกรรมของระบบตอนโหลดหนัก ตอน fail และตอน restart',
+      'ภาษาที่ใช้เขียน consumer',
+      'สีของ management UI',
+    ],
+    answer: 1,
+  },
+  {
+    q: '"queue properties" กับ "message properties" ใช้ที่ตอนไหน?',
+    options: [
+      'ทั้งคู่ set ครั้งเดียวบน connection',
+      'queue properties set ตอน declare queue; message properties set ทุกครั้งที่ publish',
+      'มันคือสิ่งเดียวกัน',
+      'message properties set โดย broker ไม่ใช่ client',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'knob ตัวไหนคือกลไกเบื้องหลัง at-least-once delivery?',
+    options: [
+      'ชื่อ queue',
+      'acknowledgement',
+      'content type',
+      'exchange type',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="queues-and-messages/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="queues-and-messages/index" />

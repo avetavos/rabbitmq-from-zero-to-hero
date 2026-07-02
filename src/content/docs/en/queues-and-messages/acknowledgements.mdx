@@ -1,0 +1,152 @@
+---
+title: 'Acknowledgements'
+description: 'Manual vs automatic ack, ack/nack/reject and requeue, the redelivered flag, and why acknowledgements are the mechanism behind at-least-once delivery.'
+sidebar:
+  order: 4
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The promise: don't lose work
+
+Here's the core question a queue must answer: if a consumer takes a message and then **crashes before finishing**, what happens to that work? Acknowledgements are the answer, and they're the single most important reliability mechanism in RabbitMQ.
+
+An **acknowledgement** (ack) is the consumer telling the broker: *"I have fully processed this message — you can delete it now."* Until that ack arrives, RabbitMQ holds the message as *unacknowledged* and will redeliver it if the consumer's channel dies.
+
+## Manual vs automatic ack
+
+There are two modes, and the difference is enormous:
+
+- **Automatic ack** (`autoAck: true` / `auto_ack=True` / `autoAck: true`): the message is considered delivered *the instant it leaves the broker*, before your code has touched it. Fast, but if your consumer crashes mid-processing, the message is **gone** — RabbitMQ already forgot it. This is at-most-once, and it silently loses work.
+- **Manual ack**: RabbitMQ delivers the message but keeps it as unacknowledged until you explicitly ack. If the channel closes without an ack, the message is **redelivered** to another consumer. This is at-least-once, and it's what you want for any work that matters.
+
+The rule: **use manual ack for anything you can't afford to lose.**
+
+## ack, nack, reject
+
+With manual ack you have three responses:
+
+- **ack** — done, delete it.
+- **nack** (or **reject**) with `requeue: true` — I couldn't process it; put it back for another attempt.
+- **nack**/**reject** with `requeue: false` — I couldn't process it and retrying won't help; drop it (or send it to a dead-letter exchange, if configured).
+
+The **`redelivered`** flag on a delivery tells you "you've seen this one before" — a hint that a previous attempt failed, so you can treat it more carefully.
+
+## The lifecycle
+
+<Mermaid title="Ack on success versus redelivery on crash" code={ackDiagram} />
+
+export const ackDiagram = `sequenceDiagram
+  participant Q as Queue
+  participant C as Consumer
+  Q->>C: deliver (unacked)
+  alt processed successfully
+    C->>C: do the work
+    C->>Q: ack
+    Note over Q: message removed
+  else consumer crashes
+    C--xC: crash before ack
+    Note over Q: no ack received
+    Q->>C: redeliver (redelivered=true)
+  end`;
+
+## Manual ack in code
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    // noAck: false → manual acknowledgement
+    channel.consume('orders', async (msg) => {
+      if (!msg) return;
+      try {
+        await handle(msg.content);
+        channel.ack(msg);                 // done
+      } catch (err) {
+        channel.nack(msg, false, true);   // requeue for another try
+      }
+    }, { noAck: false });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    def on_message(ch, method, properties, body):
+        try:
+            handle(body)
+            ch.basic_ack(delivery_tag=method.delivery_tag)          # done
+        except Exception:
+            ch.basic_nack(delivery_tag=method.delivery_tag,
+                          requeue=True)                             # retry
+
+    # auto_ack=False → manual acknowledgement
+    channel.basic_consume(queue="orders", on_message_callback=on_message, auto_ack=False)
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    // fourth arg autoAck=false → manual acknowledgement
+    msgs, _ := ch.Consume(q.Name, "", false, false, false, false, nil)
+    for d := range msgs {
+        if err := handle(d.Body); err != nil {
+            d.Nack(false, true) // requeue for another try
+            continue
+        }
+        d.Ack(false) // done
+    }
+    ```
+  </TabItem>
+</Tabs>
+
+<Callout title="The one-line takeaway">
+Acknowledgements are how RabbitMQ guarantees at-least-once delivery: with **manual ack**, a message stays unacknowledged until your consumer explicitly acks it, so a crash mid-processing causes a **redelivery** rather than lost work. Automatic ack is faster but loses messages on failure. Ack on success, nack-with-requeue for a retryable error, and nack-without-requeue (to a DLX) for a poison message.
+</Callout>
+
+export const quizAck = [
+  {
+    q: 'What is an acknowledgement in RabbitMQ?',
+    options: [
+      'The producer confirming the message was published',
+      'The consumer telling the broker it has processed a message so it can be deleted',
+      'A heartbeat between broker and client',
+      'A copy of the message sent back to the exchange',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why is automatic ack risky for important work?',
+    options: [
+      'It is slower than manual ack',
+      'The message is considered done the instant it leaves the broker, so a consumer crash loses it',
+      'It cannot be used with durable queues',
+      'It requires a priority queue',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'A consumer hits a transient error it wants to retry. What should it send?',
+    options: [
+      'ack',
+      'nack/reject with requeue = true',
+      'nack/reject with requeue = false',
+      'nothing — just close the connection',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What does the redelivered flag on a delivery indicate?',
+    options: [
+      'The message is a duplicate created by the producer',
+      'RabbitMQ has delivered this message before (a prior attempt did not ack)',
+      'The message has expired',
+      'The message came from a dead-letter exchange',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="queues-and-messages/acknowledgements" questions={quizAck} />
+
+<ProgressTracker client:visible id="queues-and-messages/acknowledgements" />

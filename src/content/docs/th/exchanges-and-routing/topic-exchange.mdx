@@ -1,0 +1,143 @@
+---
+title: 'Topic Exchange'
+description: 'routing แบบ pattern บน routing key แบบ dotted ด้วย wildcard * และ # — exchange type ที่ยืดหยุ่นที่สุด และวิธีที่ subscriber filter event'
+sidebar:
+  order: 4
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## routing ด้วย pattern
+
+**topic exchange** match routing key ของ message กับ **pattern** ในแต่ละ binding มันยืดหยุ่นที่สุดในบรรดา exchange type: direct คือ "เท่ากัน", fanout คือ "ทั้งหมด" และ topic คือ "match รูปทรงนี้" มันเปิดให้ subscriber บอกว่า "ฉันอยากได้ event *แบบเหล่านี้*" โดยที่ producer ไม่ต้องรู้ว่าใครฟังอยู่
+
+routing key มีโครงสร้างเป็น word คั่นด้วยจุด: `order.created`, `payment.failed.th`, `sensor.temperature.warehouse-3` ส่วน binding key ใช้รูปแบบ dotted เดียวกันบวก wildcard สองตัว:
+
+- `*` (star) match **หนึ่ง word พอดี**
+- `#` (hash) match **ศูนย์ word ขึ้นไป**
+
+## อ่าน wildcard
+
+<Mermaid title="topic exchange match key แบบ dotted กับ binding pattern" code={topicDiagram} />
+
+export const topicDiagram = `flowchart LR
+  p["publish\n'order.eu.created'"] --> x["topic exchange\n'events'"]
+  x -->|"order.*.created"| q1["queue: new-orders"]
+  x -->|"order.#"| q2["queue: all-order-events"]
+  x -. "ไม่ match: payment.#" .-> q3["queue: payments"]`;
+
+ลองไล่ key `order.eu.created`:
+
+- `order.*.created` → **match** (`*` กลืน `eu`, word แรกและท้ายเป็น literal)
+- `order.#` → **match** (`#` กลืน `eu.created`, กี่ word ตามหลังก็ได้)
+- `payment.#` → **ไม่ match** (word แรกต้องเป็น `payment`)
+- `order.*` → **ไม่ match** (`*` คือ word เดียวพอดี แต่หลัง `order` มีสอง word)
+
+อันสุดท้ายคือกับดักคลาสสิก: `*` คือ *หนึ่ง word พอดี* ไม่ใช่ "หนึ่งขึ้นไป" ถ้าความยาวส่วนท้ายไม่แน่นอนให้ใช้ `#`
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    const ex = 'events';
+    await channel.assertExchange(ex, 'topic', { durable: true });
+
+    // "all created orders, in any region"
+    const q = await channel.assertQueue('new-orders', { durable: true });
+    await channel.bindQueue(q.queue, ex, 'order.*.created');
+
+    // producer: the routing key describes the event
+    channel.publish(ex, 'order.eu.created', Buffer.from('...'));
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    ex = "events"
+    channel.exchange_declare(exchange=ex, exchange_type="topic", durable=True)
+
+    # "all created orders, in any region"
+    channel.queue_declare(queue="new-orders", durable=True)
+    channel.queue_bind(queue="new-orders", exchange=ex, routing_key="order.*.created")
+
+    # producer: the routing key describes the event
+    channel.basic_publish(exchange=ex, routing_key="order.eu.created", body="...")
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    ex := "events"
+    ch.ExchangeDeclare(ex, "topic", true, false, false, false, nil)
+
+    // "all created orders, in any region"
+    ch.QueueDeclare("new-orders", true, false, false, false, nil)
+    ch.QueueBind("new-orders", "order.*.created", ex, false, nil)
+
+    // producer: the routing key describes the event
+    ch.PublishWithContext(ctx, ex, "order.eu.created", false, false,
+        amqp.Publishing{Body: []byte("...")})
+    ```
+  </TabItem>
+</Tabs>
+
+## topic ครอบคลุมทั้ง direct และ fanout
+
+topic exchange เลียนแบบอีกสอง type ได้:
+
+- binding key ที่ **ไม่มี wildcard** (`order.created`) ทำงานเหมือน binding แบบ **direct** เป๊ะ
+- binding key ที่เป็นแค่ `#` match **ทุกอย่าง** ทำงานเหมือน **fanout**
+
+ด้วยเหตุนี้ หลายทีมจึงตั้ง topic exchange เป็น default สำหรับ event bus — มันไม่มีต้นทุนเพิ่มและเหลือที่ให้เพิ่ม subscriber ที่ละเอียดขึ้นทีหลัง trade-off คือวินัย: routing-key scheme ที่ดีและสม่ำเสมอ (`domain.detail.action`) คือสิ่งที่ทำให้ topic routing อ่านง่ายแทนที่จะยุ่งเหยิง
+
+<Callout title="สรุปหนึ่งบรรทัด">
+topic exchange match routing key แบบ dotted กับ **pattern** ของ binding: `*` match หนึ่ง word พอดี, `#` match ศูนย์ word ขึ้นไป มันเป็น type ที่ยืดหยุ่นที่สุด — เลียนแบบ direct (ไม่มี wildcard) หรือ fanout (`#`) ได้ จึงเป็น default ที่ดีสำหรับ event bus ตราบใดที่คุณรักษา key scheme แบบ `domain.detail.action` ให้สม่ำเสมอ
+</Callout>
+
+export const quizTopic = [
+  {
+    q: 'ใน topic exchange wildcard * match อะไร?',
+    options: [
+      'ศูนย์ word ขึ้นไป',
+      'หนึ่ง word พอดี',
+      'อักขระเดี่ยว ๆ ตัวใดก็ได้',
+      'routing key ทั้งอัน',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'binding pattern ไหน match routing key "payment.failed.th"?',
+    options: [
+      'payment.*',
+      'order.#',
+      'payment.#',
+      'payment.failed (เป๊ะ)',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'topic exchange ทำตัวเหมือน fanout exchange ได้อย่างไร?',
+    options: [
+      'ใช้ routing key ว่า "fanout"',
+      'bind queue ด้วย pattern "#" (match ทุกอย่าง)',
+      'ทำไม่ได้ — สองอย่างนี้ไม่เกี่ยวกัน',
+      'ตั้ง durable เป็น false',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไมหลายทีมตั้ง topic exchange เป็น default ของ event bus?',
+    options: [
+      'มันเป็น exchange type เดียวที่ durable ได้',
+      'มันเลียนแบบ direct และ fanout ได้ เหลือที่ให้เพิ่ม subscriber ที่ละเอียดขึ้นทีหลัง',
+      'มันบีบอัด routing key',
+      'มันการันตี exactly-once delivery',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="exchanges-and-routing/topic-exchange" questions={quizTopic} />
+
+<ProgressTracker client:visible id="exchanges-and-routing/topic-exchange" />

@@ -1,0 +1,205 @@
+---
+title: 'Your First Queue'
+description: 'Publish and consume a single message end to end in Node, Python, and Go — the minimal hello-world that every later lesson builds on.'
+sidebar:
+  order: 5
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The smallest useful example
+
+Let's send one message through RabbitMQ. To keep it minimal we'll use the **default exchange** — a nameless direct exchange that RabbitMQ provides automatically, where the routing key is simply the queue name. That lets us "publish straight to a queue" without declaring an exchange yet. (Every later lesson uses real named exchanges.)
+
+First, run a broker locally with Docker:
+
+```bash
+docker run -d --name rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management
+```
+
+Port `5672` is AMQP (for your app); `15672` is the management UI (open `http://localhost:15672`, log in with `guest`/`guest`).
+
+## The producer: publish one message
+
+The producer connects, opens a channel, declares a queue (so it exists), and publishes a message to it.
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    import amqp from 'amqplib';
+
+    const conn = await amqp.connect('amqp://localhost');
+    const channel = await conn.createChannel();
+
+    const queue = 'hello';
+    await channel.assertQueue(queue, { durable: false });
+
+    channel.sendToQueue(queue, Buffer.from('Hello, RabbitMQ!'));
+    console.log('sent: Hello, RabbitMQ!');
+
+    await channel.close();
+    await conn.close();
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    import pika
+
+    conn = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
+    channel = conn.channel()
+
+    channel.queue_declare(queue="hello", durable=False)
+
+    channel.basic_publish(exchange="", routing_key="hello", body="Hello, RabbitMQ!")
+    print("sent: Hello, RabbitMQ!")
+
+    conn.close()
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    conn, _ := amqp.Dial("amqp://guest:guest@localhost:5672/")
+    defer conn.Close()
+    ch, _ := conn.Channel()
+    defer ch.Close()
+
+    q, _ := ch.QueueDeclare("hello", false, false, false, false, nil)
+
+    ch.PublishWithContext(ctx, "", q.Name, false, false, amqp.Publishing{
+        Body: []byte("Hello, RabbitMQ!"),
+    })
+    log.Println("sent: Hello, RabbitMQ!")
+    ```
+  </TabItem>
+</Tabs>
+
+Note the empty exchange string (`""`) — that's the default exchange, and the routing key is the queue name.
+
+## The consumer: receive it
+
+The consumer connects, declares the same queue (declaring is idempotent — safe to do on both sides), and subscribes. Its callback fires for each delivered message.
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    import amqp from 'amqplib';
+
+    const conn = await amqp.connect('amqp://localhost');
+    const channel = await conn.createChannel();
+
+    const queue = 'hello';
+    await channel.assertQueue(queue, { durable: false });
+
+    console.log('waiting for messages...');
+    channel.consume(queue, (msg) => {
+      if (msg) {
+        console.log('received:', msg.content.toString());
+        channel.ack(msg);
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    import pika
+
+    conn = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
+    channel = conn.channel()
+    channel.queue_declare(queue="hello", durable=False)
+
+    def on_message(ch, method, properties, body):
+        print("received:", body.decode())
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+    channel.basic_consume(queue="hello", on_message_callback=on_message)
+    print("waiting for messages...")
+    channel.start_consuming()
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    conn, _ := amqp.Dial("amqp://guest:guest@localhost:5672/")
+    defer conn.Close()
+    ch, _ := conn.Channel()
+    defer ch.Close()
+
+    q, _ := ch.QueueDeclare("hello", false, false, false, false, nil)
+    msgs, _ := ch.Consume(q.Name, "", false, false, false, false, nil)
+
+    log.Println("waiting for messages...")
+    for d := range msgs {
+        log.Printf("received: %s", d.Body)
+        d.Ack(false)
+    }
+    ```
+  </TabItem>
+</Tabs>
+
+## What just happened
+
+<Mermaid title="The hello-world flow" code={helloDiagram} />
+
+export const helloDiagram = `flowchart LR
+  p["Producer\nsendToQueue('hello')"] -->|default exchange| q["Queue: hello"]
+  q -->|deliver| c["Consumer\nprints + acks"]`;
+
+The important details, small as they are:
+
+1. **Both sides declare the queue.** Declaring is idempotent and ensures the queue exists no matter who starts first.
+2. **The message is just bytes.** RabbitMQ doesn't care about your format — string, JSON, protobuf, anything. Serialization is your job.
+3. **The consumer acks.** After processing, it tells RabbitMQ "done" so the message is removed. Skip this and you'll get the message again on reconnect (which is exactly the safety you want — more in the acknowledgements lesson).
+
+<Callout title="The one-line takeaway">
+The minimal flow is: connect → open a channel → declare a queue on both sides → publish bytes → consume and ack. The empty-string "default exchange" lets you publish straight to a queue by name to get started, but real systems declare named exchanges and route through them — which is the next module.
+</Callout>
+
+export const quizFirst = [
+  {
+    q: 'What is the "default exchange" used in the hello-world example?',
+    options: [
+      'A topic exchange named "default"',
+      'A nameless direct exchange where the routing key is the queue name',
+      'A special queue that stores nothing',
+      'The management UI',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why do both the producer and consumer declare the queue?',
+    options: [
+      'It is required to send bytes',
+      'Declaring is idempotent and ensures the queue exists regardless of who starts first',
+      'Each side needs its own separate queue',
+      'To reset the queue contents',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What format must a message body be in?',
+    options: [
+      'It must be valid JSON',
+      'It must be XML',
+      'Any bytes — RabbitMQ does not care; serialization is your responsibility',
+      'It must be a protobuf message',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'What does the consumer\'s ack do?',
+    options: [
+      'It sends the message back to the producer',
+      'It tells RabbitMQ the message was processed, so it can be removed from the queue',
+      'It creates a new queue',
+      'It compresses the message',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="messaging-foundations/your-first-queue" questions={quizFirst} />
+
+<ProgressTracker client:visible id="messaging-foundations/your-first-queue" />

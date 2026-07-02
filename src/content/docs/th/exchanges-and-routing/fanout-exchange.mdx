@@ -1,0 +1,125 @@
+---
+title: 'Fanout Exchange'
+description: 'broadcast message ไปทุก queue ที่ bind อยู่ โดยไม่สนใจ routing key — รากฐานของ publish/subscribe'
+sidebar:
+  order: 3
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## copy ให้ทุกคน
+
+**fanout exchange** เป็น router ที่ง่ายที่สุด: มัน **ไม่สนใจ routing key เลย** และ copy message ทุกตัวไปยัง **ทุก queue ที่ bind กับมัน** publish ครั้งเดียว ได้ N queue เป็น copy อิสระ N ชุด
+
+นี่คือวิธีทำ **broadcast** — หรือถ้ามองเป็น pattern ก็คือ **publish/subscribe** producer ประกาศ event หนึ่งครั้ง แล้ว subscriber ที่สนใจแต่ละตัวมี queue ของตัวเอง bind กับ exchange และรับ copy ของตัวเองไปประมวลผลอิสระ
+
+## ตัวอย่าง: event เดียว สาม reaction
+
+เมื่อมีคนสั่ง order สามอย่างที่ไม่เกี่ยวกันต้องเกิดขึ้น: ส่ง email ยืนยัน, เขียน audit record และ invalidate cache ไม่มีอันไหนควร block อันอื่น และการเพิ่ม reaction ที่สี่ทีหลังไม่ควรต้องแตะ producer เลย fanout exchange เหมาะเป๊ะ
+
+<Mermaid title="fanout exchange copy message เดียวไปทุก queue ที่ bind" code={fanoutDiagram} />
+
+export const fanoutDiagram = `flowchart LR
+  p["publish\n'order.placed'"] --> x["fanout exchange\n'orders'"]
+  x --> qe["queue: email"]
+  x --> qa["queue: audit"]
+  x --> qc["queue: cache-invalidation"]`;
+
+consumer แต่ละตัวประกาศ queue **ของตัวเอง** แล้ว bind เข้ากับ fanout exchange เพราะแต่ละตัวมี queue แยกกัน subscriber ที่ช้าตัวหนึ่งจึงไม่หน่วงตัวอื่น และแต่ละตัวประมวลผลตาม pace ของมันเอง
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    const ex = 'orders';
+    await channel.assertExchange(ex, 'fanout', { durable: true });
+
+    // each subscriber: its own queue, bound with NO routing key
+    const q = await channel.assertQueue('email', { durable: true });
+    await channel.bindQueue(q.queue, ex, ''); // key ignored for fanout
+
+    // producer: publish once; routing key is irrelevant
+    channel.publish(ex, '', Buffer.from(JSON.stringify({ orderId: 123 })));
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    ex = "orders"
+    channel.exchange_declare(exchange=ex, exchange_type="fanout", durable=True)
+
+    # each subscriber: its own queue, bound with NO routing key
+    channel.queue_declare(queue="email", durable=True)
+    channel.queue_bind(queue="email", exchange=ex)  # key ignored for fanout
+
+    # producer: publish once; routing key is irrelevant
+    channel.basic_publish(exchange=ex, routing_key="", body='{"orderId": 123}')
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    ex := "orders"
+    ch.ExchangeDeclare(ex, "fanout", true, false, false, false, nil)
+
+    // each subscriber: its own queue, bound with NO routing key
+    ch.QueueDeclare("email", true, false, false, false, nil)
+    ch.QueueBind("email", "", ex, false, nil) // key ignored for fanout
+
+    // producer: publish once; routing key is irrelevant
+    ch.PublishWithContext(ctx, ex, "", false, false,
+        amqp.Publishing{Body: []byte(`{"orderId":123}`)})
+    ```
+  </TabItem>
+</Tabs>
+
+## fanout เทียบกับ work queue
+
+ระวังอย่าสับสนกับ work queue (โมดูลถัดไป) ความต่างอยู่ที่ว่า queue อยู่ตรงไหน:
+
+- **fanout / pub-sub:** subscriber แต่ละตัวมี **queue ของตัวเอง** ทุกคนได้ **ทุก** message ใช้ broadcast event ไปยัง handler อิสระหลายตัว
+- **work queue:** worker หลายตัวใช้ **queue เดียวร่วมกัน** message แต่ละตัวไปหา worker **แค่ตัวเดียว** ใช้กระจาย task
+
+broker เดียวกัน แต่เจตนาตรงข้าม และตัวชี้ขาดคือแค่ "ใช้ queue เดียวร่วมกัน หรือ queue ต่อ consumer หนึ่งตัว?"
+
+<Callout title="สรุปหนึ่งบรรทัด">
+fanout exchange ไม่สนใจ routing key และ copy message แต่ละตัวไป **ทุก** queue ที่ bind — กลไกเบื้องหลัง publish/subscribe ให้ subscriber แต่ละตัวมี queue **ของตัวเอง** แล้วทุกตัวจะได้ทุก event และประมวลผลอิสระ (เทียบกับ work queue ที่ใช้ queue เดียวร่วมกัน message แต่ละตัวจึงไปหา worker แค่ตัวเดียว)
+</Callout>
+
+export const quizFanout = [
+  {
+    q: 'fanout exchange route message อย่างไร?',
+    options: [
+      'match routing key เป๊ะ',
+      'ไม่สนใจ routing key และ copy ไปทุก queue ที่ bind',
+      'match pattern แบบ wildcard บน routing key',
+      'ดูจาก header ของ message',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'จะ broadcast event ไปยัง handler อิสระหลายตัว subscriber แต่ละตัวควร:',
+    options: [
+      'ใช้ queue เดียวร่วมกัน bind กับ fanout exchange',
+      'ประกาศ queue ของตัวเองแล้ว bind เข้ากับ fanout exchange',
+      'ใช้ default exchange',
+      'publish message กลับเข้า exchange',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'อะไรแยก fanout/pub-sub ออกจาก work queue?',
+    options: [
+      'fanout เร็วกว่า',
+      'ใน fanout consumer แต่ละตัวมี queue ของตัวเองและได้ทุก message; work queue ใช้ queue เดียวร่วมกัน message แต่ละตัวไปหา worker ตัวเดียว',
+      'work queue ใช้ exchange ไม่ได้',
+      'fanout ต้องมี routing key แต่ work queue ไม่ต้อง',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="exchanges-and-routing/fanout-exchange" questions={quizFanout} />
+
+<ProgressTracker client:visible id="exchanges-and-routing/fanout-exchange" />

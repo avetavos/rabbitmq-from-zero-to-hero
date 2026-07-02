@@ -1,0 +1,98 @@
+---
+title: 'Headers & Choosing an Exchange'
+description: 'Routing on message headers instead of a routing key, and a decision guide for picking direct, fanout, topic, or headers.'
+sidebar:
+  order: 5
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The headers exchange
+
+A **headers exchange** ignores the routing key entirely and routes on the message's **headers** — arbitrary key/value pairs in the message properties. A binding specifies the headers a message must carry to match, plus a special argument `x-match`:
+
+- `x-match: all` — the message must have **every** header in the binding (a logical AND).
+- `x-match: any` — the message must have **at least one** (a logical OR).
+
+For example, a binding of `{ format: "pdf", type: "report", x-match: "all" }` matches only messages whose headers include both `format=pdf` **and** `type=report`.
+
+<Mermaid title="A headers exchange matching on header values" code={headersDiagram} />
+
+export const headersDiagram = `flowchart LR
+  p["publish\nheaders: {format: pdf, type: report}"] --> x["headers exchange"]
+  x -->|"x-match: all\nformat=pdf, type=report"| q1["queue: pdf-reports"]
+  x -. "x-match: all\nformat=png" .-> q2["queue: images"]`;
+
+Headers routing is powerful when your criteria are genuinely multi-dimensional and don't compress neatly into one dotted string. In practice it's the **least used** type: a well-designed topic routing key usually expresses the same intent more simply and is faster to match. Reach for headers only when routing truly depends on several independent attributes.
+
+## Choosing an exchange type
+
+Most routing decisions come down to a short table. Match what you want to the simplest type that expresses it:
+
+| What you want | Exchange type | How |
+|---------------|---------------|-----|
+| One clear destination category per message | **direct** | Bind by exact routing key |
+| Broadcast every message to all subscribers | **fanout** | Each subscriber binds its own queue |
+| Subscribers filter by flexible patterns | **topic** | Bind with `*` / `#` patterns on a dotted key |
+| Route on several independent attributes | **headers** | Bind with header conditions + `x-match` |
+
+A few rules of thumb:
+
+- **Start with the simplest type that works.** If a single exact key is enough, use `direct` — don't reach for `topic` speculatively.
+- **Default an event bus to `topic`.** It subsumes direct and fanout, so you keep room to add finer subscribers without changing producers.
+- **Avoid `headers` unless you must.** A good dotted routing key almost always beats it on clarity and speed.
+- **Design the routing-key scheme early.** `domain.detail.action` (like `order.eu.created`) is a convention worth agreeing on before the first producer ships.
+
+<Callout title="The one-line takeaway">
+A headers exchange routes on message header values with `x-match: all`/`any` instead of a routing key — powerful but rarely needed, since a good topic key usually says the same thing more simply. When choosing: `direct` for exact categories, `fanout` to broadcast, `topic` for flexible pattern filtering (a great event-bus default), and `headers` only for genuinely multi-attribute routing.
+</Callout>
+
+export const quizHeaders = [
+  {
+    q: 'What does a headers exchange route on?',
+    options: [
+      'The routing key, matched exactly',
+      'Message header key/value pairs, using x-match all or any',
+      'The message body content',
+      'The queue name',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'A headers binding uses "x-match: any". A message matches when it has:',
+    options: [
+      'All of the binding\'s headers',
+      'At least one of the binding\'s headers',
+      'None of the binding\'s headers',
+      'A matching routing key as well',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Which exchange type is the best default for a flexible event bus?',
+    options: [
+      'direct',
+      'fanout',
+      'topic',
+      'headers',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'Why is the headers exchange rarely used in practice?',
+    options: [
+      'It cannot be made durable',
+      'A well-designed topic routing key usually expresses the same intent more simply and matches faster',
+      'It only supports one binding',
+      'It drops messages that have no headers',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="exchanges-and-routing/headers-and-choosing" questions={quizHeaders} />
+
+<ProgressTracker client:visible id="exchanges-and-routing/headers-and-choosing" />

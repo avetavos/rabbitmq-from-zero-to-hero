@@ -1,0 +1,124 @@
+---
+title: 'Direct Exchange'
+description: 'Routing by an exact routing-key match — the default exchange, named direct exchanges, and a worked example splitting logs by severity.'
+sidebar:
+  order: 2
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Exact-match routing
+
+A **direct exchange** routes a message to the queues whose **binding key** exactly equals the message's **routing key**. No patterns, no wildcards — a plain string equality check. It is the simplest exchange type and the one you reach for when a message has a single, well-defined destination category.
+
+You already used a direct exchange without naming it: the **default exchange** is a nameless direct exchange that every queue is automatically bound to by its own name. That's why publishing to routing key `hello` with an empty exchange string lands in the queue named `hello`.
+
+## A worked example: logs by severity
+
+Say you emit log messages and want `error` logs in one queue (for alerting) and `info` logs in another (for archiving). Declare a direct exchange, bind each queue with its severity as the binding key, and publish with the severity as the routing key.
+
+<Mermaid title="A direct exchange matching routing key to binding key" code={directDiagram} />
+
+export const directDiagram = `flowchart LR
+  p["publish\nkey: error"] --> x["direct exchange\n'logs'"]
+  x -->|"bind key: error"| qe["queue: errors"]
+  x -->|"bind key: info"| qi["queue: info"]
+  x -. "no match for 'error'" .-> qi`;
+
+A message published with routing key `error` matches only the binding whose key is `error`, so it goes to the `errors` queue and not the `info` queue.
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    const ex = 'logs';
+    await channel.assertExchange(ex, 'direct', { durable: true });
+
+    // consumer side: bind a queue for errors only
+    const q = await channel.assertQueue('errors', { durable: true });
+    await channel.bindQueue(q.queue, ex, 'error');
+
+    // producer side: publish with the severity as the routing key
+    channel.publish(ex, 'error', Buffer.from('disk full on node-3'));
+    channel.publish(ex, 'info', Buffer.from('user logged in'));
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    ex = "logs"
+    channel.exchange_declare(exchange=ex, exchange_type="direct", durable=True)
+
+    # consumer side: bind a queue for errors only
+    channel.queue_declare(queue="errors", durable=True)
+    channel.queue_bind(queue="errors", exchange=ex, routing_key="error")
+
+    # producer side: publish with the severity as the routing key
+    channel.basic_publish(exchange=ex, routing_key="error", body="disk full on node-3")
+    channel.basic_publish(exchange=ex, routing_key="info", body="user logged in")
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    ex := "logs"
+    ch.ExchangeDeclare(ex, "direct", true, false, false, false, nil)
+
+    // consumer side: bind a queue for errors only
+    ch.QueueDeclare("errors", true, false, false, false, nil)
+    ch.QueueBind("errors", "error", ex, false, nil)
+
+    // producer side: publish with the severity as the routing key
+    ch.PublishWithContext(ctx, ex, "error", false, false,
+        amqp.Publishing{Body: []byte("disk full on node-3")})
+    ch.PublishWithContext(ctx, ex, "info", false, false,
+        amqp.Publishing{Body: []byte("user logged in")})
+    ```
+  </TabItem>
+</Tabs>
+
+## Many bindings, same key
+
+A direct exchange isn't limited to one queue per key. If **two** queues both bind with key `error`, a single `error` message is copied to **both** — so you can combine exact routing with a bit of fan-out. Likewise, one queue can bind multiple keys (bind `errors` to both `error` and `critical`) to collect several categories.
+
+<Callout title="The one-line takeaway">
+A direct exchange routes by **exact routing-key equality**: a message goes to every queue whose binding key matches its routing key, string for string. It's the right tool when messages fall into clear, named categories (log severities, event types). The default (nameless) exchange is just a direct exchange where every queue is bound by its own name.
+</Callout>
+
+export const quizDirect = [
+  {
+    q: 'How does a direct exchange decide which queues get a message?',
+    options: [
+      'By matching the routing key against a pattern with wildcards',
+      'By exact string equality between the routing key and the binding key',
+      'By copying to every bound queue regardless of key',
+      'By the message size',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is the "default exchange" in terms of type?',
+    options: [
+      'A fanout exchange named "default"',
+      'A nameless direct exchange where every queue is bound by its own name',
+      'A topic exchange with a wildcard binding',
+      'A special exchange that stores messages',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Two queues both bind to a direct exchange with key "error". A message published with routing key "error" will:',
+    options: [
+      'Go to only the first queue that bound',
+      'Be copied to both queues',
+      'Be rejected as ambiguous',
+      'Go to neither — duplicate keys are not allowed',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="exchanges-and-routing/direct-exchange" questions={quizDirect} />
+
+<ProgressTracker client:visible id="exchanges-and-routing/direct-exchange" />

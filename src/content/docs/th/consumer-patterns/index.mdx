@@ -1,0 +1,89 @@
+---
+title: 'Consumer Patterns'
+description: 'รูปแบบการไหลของ message ไม่กี่แบบที่แก้ปัญหาจริงได้เกือบทั้งหมด — work queue, publish/subscribe, RPC และ retry ที่ปลอดภัย — และวิธีแยกแยะว่าใช้แบบไหน'
+sidebar:
+  order: 1
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## แค่ไม่กี่รูปแบบก็แก้ปัญหาได้เกือบหมด
+
+มาถึงตรงนี้คุณรู้กลไกแล้ว — exchange, queue, binding, ack โมดูลนี้ว่าด้วย **รูปแบบที่เจอซ้ำ ๆ** ที่คุณเอากลไกเหล่านั้นมาประกอบกัน ระบบ RabbitMQ จริงเกือบทุกตัวคือหนึ่งใน pattern ไม่กี่แบบ หรือเอาหลายแบบมาผสมกัน
+
+จุดที่ต้องจับให้มั่นคือ: **คุณอยากให้งานถูก *แชร์* หรือ *broadcast*?**
+
+- **แชร์** — worker หลายตัวดึงจาก queue *เดียว* และ message แต่ละตัวไปหา worker ตัวใดตัวหนึ่งเท่านั้น นั่นคือ **work queue** (competing consumers) ใช้ scale throughput
+- **Broadcast** — subscriber แต่ละตัวมี queue *ของตัวเอง* และ *ทุก* subscriber ได้ copy นั่นคือ **publish/subscribe** ใช้กระจาย event ออกไปให้หลาย reaction ที่เป็นอิสระต่อกัน
+
+แยกทางแยกนี้ให้ถูก แล้วที่เหลือคือรายละเอียด
+
+## โมดูลนี้ครอบคลุมอะไรบ้าง
+
+| บทเรียน | pattern |
+|--------|---------|
+| Work queues | กระจายงานไปยัง worker ที่แข่งกันดึงจาก queue เดียว |
+| Publish/subscribe | broadcast หนึ่ง event ไปยังหลาย consumer ที่เป็นอิสระ แต่ละตัวมี queue ของตัวเอง |
+| RPC over RabbitMQ | request/reply ด้วย `correlation_id` และ `reply_to` — และเมื่อไรที่ *ไม่* ควรใช้ |
+| Retry & backoff | จัดการ failure โดยไม่เกิด poison loop ที่วนถี่ ๆ |
+
+## ทางแยก แชร์-vs-broadcast
+
+<Mermaid title="queue เดียวที่ worker แชร์กัน เทียบกับ queue ต่อ subscriber" code={forkDiagram} />
+
+export const forkDiagram = `flowchart TB
+  subgraph wq["Work queue — shared"]
+    x1["exchange"] --> q1["one queue"]
+    q1 --> w1["worker A"]
+    q1 --> w2["worker B"]
+  end
+  subgraph ps["Pub/Sub — broadcast"]
+    x2["fanout exchange"] --> qa["queue A"] --> sa["subscriber A"]
+    x2 --> qb["queue B"] --> sb["subscriber B"]
+  end`;
+
+ใน work queue การเพิ่ม worker หมายถึง **throughput มากขึ้น** บน stream งานเดิม ส่วนใน pub/sub การเพิ่ม subscriber หมายถึง **reaction ใหม่ที่เป็นอิสระ** ต่อ event เดิม broker เดียวกัน แต่เจตนาตรงข้ามกัน ตัดสินด้วยว่า consumer แชร์ queue กันหรือแต่ละตัวถือ queue ของตัวเอง
+
+<Callout title="การปรับมุมมอง">
+อย่าเลือก pattern จากชื่อ — เลือกจาก **เจตนา** "งานเยอะเกินกว่า worker ตัวเดียวจะไหว" → work queue (competing consumers บน queue เดียว) "มีหลายอย่างที่ไม่เกี่ยวกันต้องเกิดขึ้นเมื่อ X เกิด" → pub/sub (queue ต่อ subscriber) "ต้องการคำตอบกลับมา" → RPC (แต่ถามตัวเองก่อนว่า synchronous call จะง่ายกว่าไหม) ที่เหลือคือการทำให้ทุกอย่างปลอดภัยเมื่อเกิด failure
+</Callout>
+
+export const quizIndex = [
+  {
+    q: 'ความต่างสำคัญระหว่าง work queue กับ publish/subscribe คืออะไร?',
+    options: [
+      'work queue ใช้ JSON, pub/sub ใช้ binary',
+      'ใน work queue consumer แชร์ queue เดียว (แต่ละ message ไปหา worker ตัวเดียว); ใน pub/sub แต่ละ subscriber มี queue ของตัวเองและได้ copy',
+      'work queue เร็วกว่าในทุกกรณี',
+      'pub/sub ใช้ exchange ไม่ได้',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'งานเยอะเกินกว่า worker ตัวเดียวจะตามทัน ควรใช้ pattern ไหน?',
+    options: [
+      'Publish/subscribe',
+      'work queue ที่มี competing consumers',
+      'RPC',
+      'consumer ตัวเดียวที่มี buffer ใหญ่ขึ้น',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'การเพิ่ม subscriber อีกตัวใน pub/sub ทำอะไร?',
+    options: [
+      'เพิ่ม throughput บน stream งานเดิม',
+      'เพิ่ม reaction ที่เป็นอิสระอีกตัวที่ได้รับทุก event ด้วย',
+      'ทำให้ message ถูกดึงออกจาก queue ที่แชร์กันเร็วขึ้น',
+      'ไม่มีอะไรเกิดขึ้น — subscriber ถูก ignore',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="consumer-patterns/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="consumer-patterns/index" />

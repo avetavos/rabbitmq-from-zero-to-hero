@@ -1,0 +1,85 @@
+---
+title: 'Reliability & Delivery'
+description: 'สองครึ่งของ reliable messaging — ส่ง message จาก publisher ไป broker และจาก broker ไป consumer อย่างปลอดภัย — พร้อม confirm, dead-lettering, guarantee และ durability'
+sidebar:
+  order: 1
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Reliability คือโซ่ ไม่ใช่สวิตช์
+
+"อย่าทำ message ของฉันหาย" ฟังดูเหมือน feature เดียว แต่จริง ๆ มันคือ **โซ่ที่มีหลายข้อต่อ** และ message จะปลอดภัยได้แค่เท่ากับข้อที่อ่อนแอที่สุด message หายได้ที่จุดเหล่านี้:
+
+- ระหว่าง **publisher กับ broker** — publish ไม่ถึง หรือถึง exchange ที่ route ไปไม่เจอ queue ไหนเลย
+- ภายใน **broker** — broker restart แล้ว message ไม่ได้ถูกเขียนลง disk
+- ระหว่าง **broker กับ consumer** — consumer รับ message ไป แล้ว crash กลางคัน ทั้งที่ message ถูกลบไปแล้ว
+
+การเปิด safeguard แค่ตัวเดียวแล้วคิดว่าปลอดภัยคือความผิดพลาดคลาสสิก reliability จริง ๆ คือการปิดช่องโหว่ **ทุกข้อ** ในโซ่
+
+<Mermaid title="ทุกข้อต่อในโซ่ delivery ทำ message หายได้" code={chainDiagram} />
+
+export const chainDiagram = `flowchart LR
+  p["Publisher"] -->|"gap 1:\npublisher confirms"| x["Exchange"]
+  x -->|"gap 2:\nmandatory + durable"| q["Queue"]
+  q -->|"gap 3:\npersistence"| disk["Disk"]
+  q -->|"gap 4:\nmanual ack"| c["Consumer"]`;
+
+## โมดูลนี้ครอบคลุมอะไรบ้าง
+
+| บทเรียน | ช่องโหว่ที่ปิด |
+|--------|--------------|
+| Publisher confirms | publisher → broker: รู้ว่า broker รับ message ของคุณจริง |
+| Dead-letter exchanges | จัดการ message ที่ process ไม่ได้ แทนที่จะทำหายหรือวนลูป |
+| Delivery guarantees | เข้าใจ at-most-once, at-least-once และ "exactly-once" ที่เป็น myth |
+| Durability & persistence | รอด broker restart — durable queue *และ* persistent message |
+
+## แก่นที่วนกลับมาเสมอ: at-least-once
+
+โมเดล reliability ทั้งหมดของ RabbitMQ ชี้ไปที่ guarantee เดียว: **at-least-once delivery** ทุก safeguard — confirm, ack, persistence — มีไว้เพื่อให้แน่ใจว่า message ถูกส่ง *อย่างน้อย* หนึ่งครั้ง แม้จะมี crash และ restart
+
+ราคาของ "อย่างน้อยหนึ่งครั้ง" คือบางทีคุณอาจได้ message **มากกว่า** หนึ่งครั้ง (redelivery หลัง crash) ดังนั้นอีกครึ่งของการออกแบบที่ดีอยู่ใน code ของ *คุณ*: ทำให้ consumer **idempotent** เพื่อให้ duplicate ไม่ทำอันตราย reliability คือความร่วมมือ — RabbitMQ จะไม่ทำ message หาย และคุณทำให้ process ซ้ำสองครั้งปลอดภัย
+
+<Callout title="สรุปหนึ่งบรรทัด">
+reliable messaging คือโซ่ที่มีสี่ข้อต่อ — publisher→broker, routing, การรอดบน disk และ broker→consumer — และ message ปลอดภัยได้แค่เท่ากับข้อที่อ่อนแอที่สุด เครื่องมือของ RabbitMQ ให้ **at-least-once** delivery ส่วนคุณปิดลูปด้วยการทำ consumer ให้ **idempotent** เพื่อให้ duplicate ที่นาน ๆ ทีไม่เป็นอันตราย
+</Callout>
+
+export const quizIndex = [
+  {
+    q: 'ทำไม reliability ถึงถูกอธิบายว่าเป็นโซ่ ไม่ใช่สวิตช์ตัวเดียว?',
+    options: [
+      'เพราะ RabbitMQ มี reliability setting แค่ตัวเดียว',
+      'เพราะ message หายได้หลายจุดที่เป็นอิสระต่อกัน และปลอดภัยได้แค่เท่ากับข้อที่อ่อนแอที่สุด',
+      'เพราะ reliability ต้องใช้ blockchain',
+      'เพราะ message ถูกร้อยต่อกันบน disk',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'โมเดล reliability ของ RabbitMQ เล็งไปที่ delivery guarantee แบบใด?',
+    options: [
+      'At-most-once',
+      'At-least-once',
+      'Exactly-once ที่ broker การันตีเองล้วน ๆ',
+      'ไม่มี guarantee เลย',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ครึ่งของ developer ในความร่วมมือด้าน reliability คืออะไร?',
+    options: [
+      'ปิด acknowledgement เพื่อความเร็ว',
+      'ทำ consumer ให้ idempotent เพื่อให้ duplicate ที่นาน ๆ ทีไม่เป็นอันตราย',
+      'ไม่ restart broker เลย',
+      'publish ทุก message สองครั้งโดยตั้งใจ',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="reliability/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="reliability/index" />

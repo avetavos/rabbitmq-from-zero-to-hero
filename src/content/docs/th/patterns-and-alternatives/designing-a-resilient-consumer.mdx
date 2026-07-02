@@ -1,0 +1,203 @@
+---
+title: 'Designing a Resilient Consumer'
+description: 'บทสรุป — ประกอบ durability, manual ack, prefetch ที่เหมาะสม, idempotency, retry, connection recovery และ graceful shutdown ให้เป็น consumer ระดับ production'
+sidebar:
+  order: 5
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ทุกอย่างพร้อมกัน
+
+บทเรียนเรื่อง reliability แต่ละบทให้ safety net มาทีละอย่าง consumer ระดับ production ต้องการทั้งหมดนั้นทำงานร่วมกัน บทสรุปนี้ประกอบมันเข้าเป็นดีไซน์เดียวที่คุณปรับใช้ได้
+
+## Checklist
+
+consumer ที่เชื่อถือได้บน production มีคุณสมบัติเหล่านี้:
+
+1. **durable queue + persistent messages** — เพื่อไม่ให้ broker restart ทำให้งานหาย
+2. **manual acknowledgement** — ack *หลัง* งานสำเร็จเท่านั้น เพื่อให้ crash กลางทาง redeliver
+3. **prefetch ที่เหมาะสม** — `prefetch` ที่มีขอบเขต (สัก 10–50) เพื่อไม่ให้ consumer ตัวเดียวถูกยัด message ที่ยังไม่ ack เป็นพัน
+4. **idempotent processing** — เพราะ delivery เป็นแบบ at-least-once message เดิมมาถึงได้สองครั้ง ทำให้การจัดการมันสองครั้งไม่มีผลเสีย (dedupe ด้วย message id)
+5. **retry with backoff แล้วค่อย park** — เมื่อล้มเหลว ให้ `nack` โดยไม่ requeue ทันที; route ผ่าน retry queue แบบ TTL + dead-letter; หลัง N ครั้ง ส่งไป **parking** (dead) queue ให้คนดู
+6. **connection recovery** — reconnect อัตโนมัติเมื่อ connection ไป broker หลุด และ re-declare topology
+7. **graceful shutdown** — เมื่อได้ SIGTERM ให้หยุดรับ delivery ใหม่, ทำงาน in-flight ให้เสร็จ (และ ack มัน) *แล้วค่อย* close channel และ connection
+8. **observability** — log และปล่อย metric ของ message ที่ processed, retried และ parked เพื่อให้เห็น failure
+
+## flow พร้อม net ครบทุกชั้น
+
+<Mermaid title="การจัดการ message หนึ่งตัวของ resilient consumer" code={resilientDiagram} />
+
+export const resilientDiagram = `flowchart TB
+  deliver["message ถูก deliver\n(ถูกจำกัดด้วย prefetch)"] --> dedupe{"เคยเห็น id นี้ไหม?"}
+  dedupe -->|เคย| ackdup["ack (ข้ามแบบ idempotent)"]
+  dedupe -->|ไม่เคย| work["process งาน"]
+  work -->|สำเร็จ| ack["ack"]
+  work -->|ล้มเหลว| retry{"attempts < N?"}
+  retry -->|ใช่| ttl["nack -> retry queue (TTL) -> กลับ main"]
+  retry -->|ไม่| park["route ไป parking queue\n(alert คน)"]`;
+
+## โครง consumer ที่ทนทาน
+
+รายละเอียดต่างกันไปตาม client แต่รูปทรงเหมือนกันทุกที่: prefetch ที่มีขอบเขต, manual ack ตอนสำเร็จ, dead-letter เมื่อล้มเหลวซ้ำ ๆ และ shutdown hook
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    import amqp from 'amqplib';
+
+    const conn = await amqp.connect('amqp://localhost');
+    const channel = await conn.createChannel();
+
+    await channel.assertQueue('tasks', { durable: true });
+    channel.prefetch(20); // bounded in-flight work
+
+    channel.consume('tasks', async (msg) => {
+      if (!msg) return;
+      const id = msg.properties.messageId;
+      try {
+        if (await alreadyProcessed(id)) { channel.ack(msg); return; } // idempotent
+        await doWork(msg.content);
+        await markProcessed(id);
+        channel.ack(msg);                       // ack only after success
+      } catch (err) {
+        const attempts = (msg.properties.headers?.['x-attempts'] ?? 0) + 1;
+        if (attempts >= 5) channel.nack(msg, false, false); // -> DLX/parking
+        else republishToRetryQueue(channel, msg, attempts); // TTL + DLX retry
+        channel.ack(msg);                        // remove the original
+      }
+    });
+
+    process.on('SIGTERM', async () => {         // graceful shutdown
+      await channel.close();
+      await conn.close();
+      process.exit(0);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    import pika, signal
+
+    conn = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
+    channel = conn.channel()
+    channel.queue_declare(queue="tasks", durable=True)
+    channel.basic_qos(prefetch_count=20)          # bounded in-flight work
+
+    def on_message(ch, method, props, body):
+        msg_id = props.message_id
+        try:
+            if already_processed(msg_id):          # idempotent
+                ch.basic_ack(method.delivery_tag); return
+            do_work(body)
+            mark_processed(msg_id)
+            ch.basic_ack(method.delivery_tag)       # ack only after success
+        except Exception:
+            attempts = (props.headers or {}).get("x-attempts", 0) + 1
+            if attempts >= 5:
+                ch.basic_nack(method.delivery_tag, requeue=False)  # -> DLX/parking
+            else:
+                republish_to_retry_queue(ch, body, props, attempts)  # TTL + DLX
+                ch.basic_ack(method.delivery_tag)
+
+    channel.basic_consume(queue="tasks", on_message_callback=on_message)
+
+    def shutdown(*_):                              # graceful shutdown
+        channel.stop_consuming(); conn.close()
+    signal.signal(signal.SIGTERM, shutdown)
+    channel.start_consuming()
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    conn, _ := amqp.Dial("amqp://guest:guest@localhost:5672/")
+    defer conn.Close()
+    ch, _ := conn.Channel()
+    defer ch.Close()
+
+    ch.QueueDeclare("tasks", true, false, false, false, nil) // durable
+    ch.Qos(20, 0, false)                                     // bounded prefetch
+    msgs, _ := ch.Consume("tasks", "", false, false, false, false, nil)
+
+    go func() {
+        for d := range msgs {
+            id, _ := d.MessageId, d.Headers
+            if alreadyProcessed(id) { d.Ack(false); continue } // idempotent
+            if err := doWork(d.Body); err != nil {
+                attempts := attemptCount(d.Headers) + 1
+                if attempts >= 5 {
+                    d.Nack(false, false)                       // -> DLX/parking
+                } else {
+                    republishToRetryQueue(ch, d, attempts)     // TTL + DLX
+                    d.Ack(false)
+                }
+                continue
+            }
+            markProcessed(id)
+            d.Ack(false)                                       // ack after success
+        }
+    }()
+
+    <-ctx.Done() // graceful shutdown: stop, finish in-flight, then close
+    ```
+  </TabItem>
+</Tabs>
+
+## นิสัยที่สำคัญที่สุด
+
+ถ้าคุณจำอะไรได้แค่สามอย่างจากทั้งคอร์สนี้ ให้เป็นสามอย่างนี้: **ack หลังสำเร็จ ไม่ใช่ก่อน** (มันคือความต่างระหว่างงานหายกับไม่หาย); **ทำ processing ให้ idempotent** (เพราะ at-least-once การันตีว่ามี duplicate); และ **อย่า requeue poison message ใน loop แน่น ๆ** (ใช้ TTL + dead-letter retry และ parking queue) ที่เหลือคือรายละเอียดที่ต่อยอดจากสามข้อนี้
+
+<Callout title="สรุปหนึ่งบรรทัด">
+resilient consumer รวมทุกบทเรียนเรื่อง reliability เข้าด้วยกัน: durable queue + persistent messages, **manual ack หลังสำเร็จ**, prefetch ที่มีขอบเขต, processing แบบ **idempotent** (duplicate เกิดแน่นอน), retry ผ่าน TTL + dead-letter พร้อม parking queue หลัง N ครั้ง, connection recovery อัตโนมัติ และ **graceful shutdown** ที่ทำงาน in-flight ให้เสร็จก่อน close ack-หลังสำเร็จ, idempotency และไม่มี poison loop แน่น ๆ คือสามนิสัยที่มีน้ำหนักมากที่สุด
+</Callout>
+
+export const quizResilient = [
+  {
+    q: 'resilient consumer ควร acknowledge message เมื่อไร?',
+    options: [
+      'ทันทีตอน deliver ก่อน process',
+      'หลังงานสำเร็จเท่านั้น',
+      'ไม่ต้องเลย — พึ่ง auto-ack',
+      'ก่อนเปิด channel',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไม processing ต้อง idempotent?',
+    options: [
+      'เพราะ message ถูก encrypt',
+      'เพราะ at-least-once delivery หมายความว่า message เดิมมาถึงได้มากกว่าหนึ่งครั้ง',
+      'เพราะ prefetch บังคับ',
+      'เพื่อทำให้ message เล็กลง',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'วิธีที่ปลอดภัยในการจัดการ message ที่ล้มเหลวซ้ำ ๆ คืออะไร?',
+    options: [
+      'requeue มันทันทีใน loop แน่น ๆ',
+      'ทิ้งมันเงียบ ๆ',
+      'retry ด้วย delay แบบ TTL + dead-letter แล้ว park มันหลัง N ครั้งให้คนดู',
+      'ack มันแล้วแกล้งว่าสำเร็จ',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'graceful shutdown ควรทำอะไรเมื่อได้ SIGTERM?',
+    options: [
+      'kill process ทันที ทิ้งงาน in-flight',
+      'หยุดรับ delivery ใหม่, ทำงาน in-flight ให้เสร็จและ ack แล้วค่อย close',
+      'purge queue',
+      'requeue ทุก message ที่ยังไม่ ack สองครั้ง',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="patterns-and-alternatives/designing-a-resilient-consumer" questions={quizResilient} />
+
+<ProgressTracker client:visible id="patterns-and-alternatives/designing-a-resilient-consumer" />

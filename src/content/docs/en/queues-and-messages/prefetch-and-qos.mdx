@@ -1,0 +1,122 @@
+---
+title: 'Prefetch & QoS'
+description: 'Consumer prefetch (basic.qos), fair dispatch versus round-robin, and why an unbounded prefetch lets one slow worker hoard the whole queue.'
+sidebar:
+  order: 5
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The problem: one worker eats everything
+
+Put two consumers on a queue and RabbitMQ hands out messages **round-robin** — one to each, in turn. That sounds fair, but it's fair by *count*, not by *work*. If it blindly pushes messages as fast as it can, a consumer that grabbed ten slow messages is buried while another sits idle. Worse, with manual ack and no limit, the broker can shove *hundreds* of unacked messages at one consumer, blowing up its memory.
+
+The fix is **prefetch**, set via `basic.qos`.
+
+## What prefetch does
+
+Prefetch caps how many **unacknowledged** messages a consumer may hold at once. Set it to `1` and RabbitMQ won't give a consumer a second message until it acks the first. Set it to `50` and a consumer can have up to 50 in flight.
+
+This turns round-robin into **fair dispatch**: a busy consumer stops receiving new work until it catches up, so messages naturally flow to whoever is actually free.
+
+<Mermaid title="Round-robin (no limit) versus fair dispatch (prefetch)" code={qosDiagram} />
+
+export const qosDiagram = `flowchart TB
+  subgraph rr["No prefetch limit — round-robin by count"]
+    q1["queue"] --> w1["worker A (busy,\nburied in slow tasks)"]
+    q1 --> w2["worker B (idle,\nnothing queued to it)"]
+  end
+  subgraph fd["prefetch = 1 — fair dispatch"]
+    q2["queue"] --> w3["worker A\n(1 at a time)"]
+    q2 --> w4["worker B\n(gets the next free one)"]
+  end`;
+
+## Choosing a value
+
+There's a trade-off:
+
+- **prefetch = 1** — the fairest, and the safest for long or uneven tasks. The cost is a little latency: a consumer waits for the ack round-trip before getting the next message. Great for slow jobs (image processing, emails).
+- **Higher prefetch (e.g. 10–100)** — more throughput for fast, uniform tasks, because the consumer always has a buffer ready and isn't stalled waiting for the next delivery. The cost is less even distribution and more memory per consumer.
+
+A good default for typical background jobs is a **small number** (1 for slow tasks, 10–50 for fast ones), tuned by watching queue depth and consumer utilisation. Never leave it unbounded in production.
+
+## Setting prefetch
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    // at most 1 unacked message per consumer at a time
+    await channel.prefetch(1);
+    channel.consume('orders', handler, { noAck: false });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    # at most 1 unacked message per consumer at a time
+    channel.basic_qos(prefetch_count=1)
+    channel.basic_consume(queue="orders", on_message_callback=handler, auto_ack=False)
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    // prefetchCount=1, prefetchSize=0, global=false
+    ch.Qos(1, 0, false)
+    msgs, _ := ch.Consume(q.Name, "", false, false, false, false, nil)
+    ```
+  </TabItem>
+</Tabs>
+
+<Callout title="The one-line takeaway">
+By default RabbitMQ dispatches round-robin by message *count*, which lets one unlucky consumer hoard slow work while others idle — and with manual ack and no limit, it can overwhelm a consumer's memory. **Prefetch** (`basic.qos`) caps unacked messages per consumer, turning that into **fair dispatch**. Use a low value (often 1) for slow/uneven tasks and a higher one for fast uniform tasks; never leave it unbounded.
+</Callout>
+
+export const quizQos = [
+  {
+    q: 'By default, how does RabbitMQ distribute messages across multiple consumers on one queue?',
+    options: [
+      'All to the fastest consumer',
+      'Round-robin by message count',
+      'Randomly',
+      'By message size',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What does prefetch (basic.qos) limit?',
+    options: [
+      'The total number of messages in the queue',
+      'The number of unacknowledged messages a consumer may hold at once',
+      'The size of each message',
+      'The number of connections',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why can an unbounded prefetch be dangerous with manual ack?',
+    options: [
+      'It disables acknowledgements',
+      'The broker can push hundreds of unacked messages to one consumer, blowing up its memory and unbalancing work',
+      'It makes messages non-durable',
+      'It forces round-robin off',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'For slow, uneven tasks, what prefetch value gives the fairest distribution?',
+    options: [
+      'A very high value like 1000',
+      'Unlimited',
+      'A low value such as 1',
+      'It makes no difference',
+    ],
+    answer: 2,
+  },
+];
+
+<Quiz client:visible id="queues-and-messages/prefetch-and-qos" questions={quizQos} />
+
+<ProgressTracker client:visible id="queues-and-messages/prefetch-and-qos" />

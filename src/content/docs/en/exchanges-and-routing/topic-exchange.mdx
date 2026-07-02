@@ -1,0 +1,143 @@
+---
+title: 'Topic Exchange'
+description: 'Pattern routing on dotted routing keys with the * and # wildcards — the most flexible exchange type, and how subscribers filter events.'
+sidebar:
+  order: 4
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Routing by pattern
+
+A **topic exchange** matches a message's routing key against a **pattern** in each binding. It's the most flexible of the exchange types: direct routing is "equals", fanout is "everything", and topic is "matches this shape". It lets subscribers say "I want *these kinds* of events" without the producer knowing who's listening.
+
+The routing key is structured as words separated by dots: `order.created`, `payment.failed.th`, `sensor.temperature.warehouse-3`. Binding keys use the same dotted form plus two wildcards:
+
+- `*` (star) matches **exactly one** word.
+- `#` (hash) matches **zero or more** words.
+
+## Reading the wildcards
+
+<Mermaid title="A topic exchange matching a dotted key against binding patterns" code={topicDiagram} />
+
+export const topicDiagram = `flowchart LR
+  p["publish\n'order.eu.created'"] --> x["topic exchange\n'events'"]
+  x -->|"order.*.created"| q1["queue: new-orders"]
+  x -->|"order.#"| q2["queue: all-order-events"]
+  x -. "no match: payment.#" .-> q3["queue: payments"]`;
+
+Walk through a key of `order.eu.created`:
+
+- `order.*.created` → **matches** (`*` absorbs `eu`, the first and last words are literal).
+- `order.#` → **matches** (`#` absorbs `eu.created`, any number of trailing words).
+- `payment.#` → **no match** (first word must be `payment`).
+- `order.*` → **no match** (`*` is exactly one word, but there are two words after `order`).
+
+That last one is the classic gotcha: `*` is *exactly one* word, not "one or more". Use `#` when the tail length varies.
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    const ex = 'events';
+    await channel.assertExchange(ex, 'topic', { durable: true });
+
+    // "all created orders, in any region"
+    const q = await channel.assertQueue('new-orders', { durable: true });
+    await channel.bindQueue(q.queue, ex, 'order.*.created');
+
+    // producer: the routing key describes the event
+    channel.publish(ex, 'order.eu.created', Buffer.from('...'));
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    ex = "events"
+    channel.exchange_declare(exchange=ex, exchange_type="topic", durable=True)
+
+    # "all created orders, in any region"
+    channel.queue_declare(queue="new-orders", durable=True)
+    channel.queue_bind(queue="new-orders", exchange=ex, routing_key="order.*.created")
+
+    # producer: the routing key describes the event
+    channel.basic_publish(exchange=ex, routing_key="order.eu.created", body="...")
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    ex := "events"
+    ch.ExchangeDeclare(ex, "topic", true, false, false, false, nil)
+
+    // "all created orders, in any region"
+    ch.QueueDeclare("new-orders", true, false, false, false, nil)
+    ch.QueueBind("new-orders", "order.*.created", ex, false, nil)
+
+    // producer: the routing key describes the event
+    ch.PublishWithContext(ctx, ex, "order.eu.created", false, false,
+        amqp.Publishing{Body: []byte("...")})
+    ```
+  </TabItem>
+</Tabs>
+
+## Topic subsumes direct and fanout
+
+A topic exchange can imitate the other two:
+
+- A binding key with **no wildcards** (`order.created`) behaves exactly like a **direct** binding.
+- A binding key of just `#` matches **everything**, behaving like a **fanout**.
+
+Because of this, many teams default to a topic exchange for event buses — it costs nothing extra and leaves room to add finer-grained subscribers later. The trade-off is discipline: a good, consistent routing-key scheme (`domain.detail.action`) is what makes topic routing readable instead of a tangle.
+
+<Callout title="The one-line takeaway">
+A topic exchange matches dotted routing keys against binding **patterns**: `*` matches exactly one word, `#` matches zero or more. It's the most flexible type — it can mimic direct (no wildcards) or fanout (`#`) — which makes it a great default for event buses, as long as you keep a consistent `domain.detail.action` key scheme.
+</Callout>
+
+export const quizTopic = [
+  {
+    q: 'In a topic exchange, what does the * wildcard match?',
+    options: [
+      'Zero or more words',
+      'Exactly one word',
+      'Any single character',
+      'The entire routing key',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Which binding pattern matches the routing key "payment.failed.th"?',
+    options: [
+      'payment.*',
+      'order.#',
+      'payment.#',
+      'payment.failed (exact)',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'How can a topic exchange behave like a fanout exchange?',
+    options: [
+      'By using the routing key "fanout"',
+      'By binding a queue with the pattern "#" (match everything)',
+      'It cannot — they are unrelated',
+      'By setting durable to false',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why do many teams default to a topic exchange for an event bus?',
+    options: [
+      'It is the only durable exchange type',
+      'It can mimic direct and fanout, leaving room to add finer subscribers later',
+      'It compresses routing keys',
+      'It guarantees exactly-once delivery',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="exchanges-and-routing/topic-exchange" questions={quizTopic} />
+
+<ProgressTracker client:visible id="exchanges-and-routing/topic-exchange" />

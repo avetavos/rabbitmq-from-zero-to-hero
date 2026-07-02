@@ -1,0 +1,122 @@
+---
+title: 'Prefetch & QoS'
+description: 'consumer prefetch (basic.qos), fair dispatch เทียบ round-robin และทำไม prefetch แบบไม่จำกัดถึงปล่อยให้ worker ตัวช้าตัวเดียวกินงานทั้ง queue'
+sidebar:
+  order: 5
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ปัญหา: worker ตัวเดียวกินหมด
+
+เอา consumer สองตัวมาต่อกับ queue หนึ่ง RabbitMQ จะแจก message แบบ **round-robin** — ตัวละหนึ่งสลับกันไป ฟังดูยุติธรรม แต่มันยุติธรรมโดย *จำนวน* ไม่ใช่โดย *ปริมาณงาน* ถ้ามันดัน message ให้เร็วที่สุดโดยไม่คิด consumer ที่คว้า message ช้า ๆ ไปสิบตัวก็จมงาน ขณะที่อีกตัวนั่งว่าง ที่แย่กว่านั้น ด้วย manual ack และไม่มี limit broker อาจยัด message ที่ยัง unacked เป็น *ร้อย ๆ* ตัวให้ consumer ตัวเดียว จน memory ของมันระเบิด
+
+ทางแก้คือ **prefetch** ตั้งผ่าน `basic.qos`
+
+## prefetch ทำอะไร
+
+prefetch จำกัดจำนวน message ที่ยัง **unacknowledged** ที่ consumer ถือได้พร้อมกัน ตั้งเป็น `1` แล้ว RabbitMQ จะไม่ให้ message ตัวที่สองจนกว่ามันจะ ack ตัวแรก ตั้งเป็น `50` แล้ว consumer มี in flight ได้ถึง 50 ตัว
+
+นี่เปลี่ยน round-robin ให้เป็น **fair dispatch**: consumer ที่ยุ่งจะหยุดรับงานใหม่จนกว่าจะตามทัน message จึงไหลไปหาใครก็ตามที่ว่างจริง ๆ โดยธรรมชาติ
+
+<Mermaid title="round-robin (ไม่มี limit) เทียบ fair dispatch (prefetch)" code={qosDiagram} />
+
+export const qosDiagram = `flowchart TB
+  subgraph rr["ไม่มี prefetch limit — round-robin โดยจำนวน"]
+    q1["queue"] --> w1["worker A (ยุ่ง,\nจมกับงานช้า)"]
+    q1 --> w2["worker B (ว่าง,\nไม่มีอะไรถูก queue ให้)"]
+  end
+  subgraph fd["prefetch = 1 — fair dispatch"]
+    q2["queue"] --> w3["worker A\n(ทีละหนึ่ง)"]
+    q2 --> w4["worker B\n(รับตัวว่างถัดไป)"]
+  end`;
+
+## การเลือกค่า
+
+มี trade-off:
+
+- **prefetch = 1** — ยุติธรรมที่สุด และปลอดภัยที่สุดสำหรับงานยาวหรือไม่สม่ำเสมอ ต้นทุนคือ latency นิดหน่อย: consumer รอ ack round-trip ก่อนได้ message ตัวถัดไป เหมาะกับงานช้า (image processing, ส่ง email)
+- **prefetch สูงขึ้น (เช่น 10–100)** — throughput ดีกว่าสำหรับงานเร็วและสม่ำเสมอ เพราะ consumer มี buffer พร้อมเสมอ ไม่ต้องรอ delivery ตัวถัดไป ต้นทุนคือ distribution ไม่สม่ำเสมอเท่าและ memory ต่อ consumer มากขึ้น
+
+default ที่ดีสำหรับ background job ทั่วไปคือ **เลขน้อย ๆ** (1 สำหรับงานช้า, 10–50 สำหรับงานเร็ว) ปรับจูนโดยดู queue depth และ consumer utilization อย่าปล่อยให้ไม่จำกัดใน production
+
+## ตั้ง prefetch
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    // at most 1 unacked message per consumer at a time
+    await channel.prefetch(1);
+    channel.consume('orders', handler, { noAck: false });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    # at most 1 unacked message per consumer at a time
+    channel.basic_qos(prefetch_count=1)
+    channel.basic_consume(queue="orders", on_message_callback=handler, auto_ack=False)
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    // prefetchCount=1, prefetchSize=0, global=false
+    ch.Qos(1, 0, false)
+    msgs, _ := ch.Consume(q.Name, "", false, false, false, false, nil)
+    ```
+  </TabItem>
+</Tabs>
+
+<Callout title="สรุปหนึ่งบรรทัด">
+โดย default RabbitMQ แจก message แบบ round-robin โดย *จำนวน* ซึ่งปล่อยให้ consumer ตัวซวยกินงานช้าไปคนเดียวขณะที่ตัวอื่นว่าง — และด้วย manual ack ที่ไม่มี limit มันอาจทำ memory ของ consumer ล้น **prefetch** (`basic.qos`) จำกัดจำนวน unacked message ต่อ consumer เปลี่ยนมันเป็น **fair dispatch** ใช้ค่าต่ำ (มักเป็น 1) สำหรับงานช้า/ไม่สม่ำเสมอ และค่าสูงกว่าสำหรับงานเร็วสม่ำเสมอ อย่าปล่อยให้ไม่จำกัด
+</Callout>
+
+export const quizQos = [
+  {
+    q: 'โดย default RabbitMQ แจก message ไปยัง consumer หลายตัวบน queue เดียวอย่างไร?',
+    options: [
+      'ให้ consumer ที่เร็วที่สุดทั้งหมด',
+      'round-robin โดยจำนวน message',
+      'แบบสุ่ม',
+      'โดยขนาด message',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'prefetch (basic.qos) จำกัดอะไร?',
+    options: [
+      'จำนวน message ทั้งหมดใน queue',
+      'จำนวน unacknowledged message ที่ consumer ถือได้พร้อมกัน',
+      'ขนาดของแต่ละ message',
+      'จำนวน connection',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไม prefetch แบบไม่จำกัดถึงอันตรายเมื่อใช้ manual ack?',
+    options: [
+      'มันปิด acknowledgement',
+      'broker อาจดัน unacked message เป็นร้อยตัวให้ consumer เดียว จน memory ล้นและงานไม่สมดุล',
+      'มันทำให้ message ไม่ durable',
+      'มันบังคับปิด round-robin',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'สำหรับงานช้าและไม่สม่ำเสมอ ค่า prefetch เท่าไรให้การกระจายที่ยุติธรรมที่สุด?',
+    options: [
+      'ค่าสูงมากอย่าง 1000',
+      'ไม่จำกัด',
+      'ค่าต่ำอย่าง 1',
+      'ไม่ต่างกัน',
+    ],
+    answer: 2,
+  },
+];
+
+<Quiz client:visible id="queues-and-messages/prefetch-and-qos" questions={quizQos} />
+
+<ProgressTracker client:visible id="queues-and-messages/prefetch-and-qos" />

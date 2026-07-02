@@ -1,0 +1,78 @@
+---
+title: 'Operations & Scaling'
+description: 'รัน RabbitMQ บน production — clustering และ quorum queue, การจัดการ connection และ channel, monitoring และ flow control ภายใต้ load'
+sidebar:
+  order: 1
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## จาก "มันทำงานได้" ไปสู่ "มันอยู่รอด"
+
+ทุกอย่างก่อนหน้านี้สมมติว่ามี broker ตัวเดียวที่แข็งแรง แต่ production ต่างออกไป: node ล่มได้, queue กลายเป็น bottleneck ได้, connection churn ได้ และ message ที่หลั่งไหลเข้ามาอาจดัน broker จนชน memory limit โมดูลนี้พูดถึงการทำให้ RabbitMQ **available, observable และ stable** ภายใต้ load จริง
+
+## โมดูลนี้ครอบคลุมอะไรบ้าง
+
+| บทเรียน | สิ่งที่คุณจะได้เรียน |
+|--------|-------------------|
+| Clustering & quorum queues | node รวมกันเป็น cluster อย่างไร และทำไม quorum queue คือ HA default ยุคใหม่ |
+| Connections & channels | การจัดการ connection บน production, heartbeat และ automatic recovery |
+| Monitoring & management | management UI, metric ที่สำคัญจริง และ memory/disk alarm |
+| Flow control & alarms | เกิดอะไรขึ้นเมื่อ broker โดน overload และออกแบบเลี่ยงมันอย่างไร |
+
+## สามคำถามที่ production ถามเสมอ
+
+<Mermaid title="การ operate RabbitMQ จริง ๆ แล้วคือเรื่องอะไร" code={opsDiagram} />
+
+export const opsDiagram = `flowchart TB
+  avail["Availability\nnode ล่ม → message รอดไหม?"] --> hero["RabbitMQ\nที่แข็งแรง"]
+  obs["Observability\nเห็น queue depth\nก่อนมันจะเจ็บไหม?"] --> hero
+  stab["Stability\nเกิดอะไรขึ้นเมื่อ\nbroker เต็ม?"] --> hero`;
+
+- **Availability** — ถ้า node ล่ม queue กับ message ของมันรอดไหม? (Clustering + quorum queue)
+- **Observability** — เห็น backlog ที่กำลังโต หรือ consumer ที่ค้าง ก่อน user จะรู้สึกไหม? (Monitoring)
+- **Stability** — เมื่อ producer วิ่งเร็วกว่า consumer, broker ปกป้องตัวเองอย่างนุ่มนวลไหม? (Flow control + alarm)
+
+<Callout title="มุมมองที่ต้องเปลี่ยน">
+ตอน development เราปรับให้ตอบคำถามว่า "message ส่งถึงไหม?" แต่ตอน operations เราปรับให้ตอบว่า "เกิดอะไรขึ้นใน **วันที่แย่ที่สุด**" — node ล่ม, consumer ค้าง, disk เกือบเต็ม feature ทุกตัวในโมดูลนี้มีอยู่เพื่อทำให้วันที่แย่นั้น "อยู่รอดได้" แทนที่จะ "หายนะ"
+</Callout>
+
+export const quizIndex = [
+  {
+    q: 'operations เพิ่มความกังวลอะไรขึ้นมานอกเหนือจาก "message ส่งถึงไหม?"',
+    options: [
+      'ทำให้ message เล็กลง',
+      'เกิดอะไรขึ้นในวันที่แย่ที่สุด — node ล่ม, consumer ค้าง, disk เต็ม',
+      'เลือก serialization format',
+      'เปลี่ยนชื่อ queue',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'feature ใดของ RabbitMQ จัดการเรื่อง availability เป็นหลักเมื่อ node ล่ม?',
+    options: [
+      'Prefetch',
+      'Quorum queue (replication ข้าม node ใน cluster)',
+      'Management UI',
+      'Message TTL',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไมการ monitor queue depth ถึงสำคัญ?',
+    options: [
+      'มันทำให้ consumer เร็วขึ้น',
+      'backlog ที่กำลังโตเตือนคุณว่ามี consumer ที่ค้างหรือช้าเกินไป ก่อน user จะได้รับผลกระทบ',
+      'มันลดขนาด message',
+      'มันจำเป็นสำหรับการ publish',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="operations-and-scaling/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="operations-and-scaling/index" />

@@ -1,0 +1,112 @@
+---
+title: 'Clustering & Quorum Queues'
+description: 'node ของ RabbitMQ รวมกันเป็น cluster อย่างไร, ทำไม classic queue ถึงเป็น single point of failure และทำไม quorum queue คือ HA default ยุคใหม่'
+sidebar:
+  order: 2
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## cluster แชร์ metadata ไม่ใช่ queue
+
+**cluster** ของ RabbitMQ คือ node หลายตัวที่ทำงานเป็น broker เชิงตรรกะตัวเดียว พวกมันแชร์ **metadata** — exchange, binding, user, vhost และรายชื่อ queue ที่มีอยู่ — ดังนั้น client ต่อเข้า node ไหนก็เห็น topology เดียวกัน
+
+แต่มีจุดที่คนมักตกใจ: **classic queue อยู่บน node ตัวเดียวที่มันถูก declare เท่านั้น** node อื่นรู้ว่า queue นี้มีอยู่ แต่ไม่ได้ถือ message ของมันเลย ถ้า client ต่อเข้าที่อื่น operation ของมันจะถูก forward ไปยัง node ที่เป็นเจ้าของ queue
+
+<Mermaid title="classic queue อยู่บน node เดียว — เป็น single point of failure" code={classicDiagram} />
+
+export const classicDiagram = `flowchart TB
+  c["Client\n(ต่อเข้าที่ไหนก็ได้)"] --> n1["Node 1\nqueue: orders (เจ้าของ)"]
+  c -.forward.-> n2["Node 2\n(ไม่มี message)"]
+  c -.forward.-> n3["Node 3\n(ไม่มี message)"]
+  n1 --> risk["Node 1 ล่ม →\nqueue + message หายหมด"]`;
+
+ดังนั้น clustering อย่างเดียวให้ **scale และ topology ที่แชร์กัน** แต่ไม่ได้ให้ **high availability สำหรับ message ใน queue** ถ้า node ที่เป็นเจ้าของล่ม classic queue (ที่ไม่ได้ replicate) กับข้อมูลข้างในก็หายไปด้วย
+
+## คำตอบเดิม: mirrored queue (ตอนนี้ deprecated แล้ว)
+
+ในอดีต วิธีแก้คือ **classic mirrored queue** — replicate เนื้อหาของ queue ไปเป็น mirror บน node อื่น mirroring ใช้งานได้ แต่ปวดหัวเรื่อง operation: sync queue ใหญ่ ๆ ช้า, failover semantics ยุ่งยาก และมี edge case ที่ทำ message หายหรือซ้ำได้ตอน partition mirrored queue **deprecated** ไปแล้ว และไม่ควรใช้กับระบบใหม่
+
+## คำตอบยุคใหม่: quorum queue
+
+**quorum queue** คือ replicated queue ที่สร้างบน consensus algorithm ชื่อ **Raft** quorum queue มี leader และ follower กระจายอยู่บน node ต่าง ๆ ใน cluster โดย message จะถูก confirm ก็ต่อเมื่อ replica เกิน **majority (quorum)** เก็บมันลง disk แบบ durable แล้ว
+
+<Mermaid title="quorum queue ที่ replicate ข้าม 3 node" code={quorumDiagram} />
+
+export const quorumDiagram = `flowchart TB
+  p["Publisher"] --> leader["Node 1: leader replica"]
+  leader --> f1["Node 2: follower"]
+  leader --> f2["Node 3: follower"]
+  leader --> conf["confirm ก็ต่อเมื่อ\nmajority เก็บแล้ว"]
+  leader --> ha["leader ล่ม →\nเลือก follower ขึ้นมาแทน,\nไม่มี message หาย"]`;
+
+เพราะต้องให้ majority เห็นตรงกัน quorum queue จึงรอดเมื่อเสีย node ส่วนน้อย (เช่น 1 จาก 3 node) โดย **ไม่มี message หาย** และ elect leader ใหม่อัตโนมัติ นี่คือตัวเลือก default สำหรับ HA ใน RabbitMQ ยุคใหม่
+
+## trade-off
+
+replication ไม่ฟรี และ quorum queue เลือกอย่างจงใจ:
+
+| | Classic queue | Quorum queue |
+|--|---------------|--------------|
+| **Replication** | ไม่มี (node เดียว) | Raft, majority quorum |
+| **Node failure** | message หาย | รอดเมื่อเสีย node ส่วนน้อย |
+| **Throughput** | สูงสุด | ต่ำกว่า (ต้นทุน replication) |
+| **Latency** | ต่ำสุด | สูงกว่า (รอ quorum) |
+| **Memory model** | เก็บใน memory ได้ | durable บน disk เสมอ |
+| **เหมาะกับ** | transient, throughput สูง | message สำคัญที่หายไม่ได้ |
+
+quorum queue เป็น durable เสมอ และต้องการจำนวน replica เป็นเลขคี่ (ปกติ 3 หรือ 5) เพื่อ break ties ใช้มันกับ message ที่สำคัญ ส่วน classic queue ยังเหมาะกับงาน transient ที่ throughput สูงและยอมให้ message หายได้
+
+<Callout title="สรุปสั้น ๆ">
+cluster แชร์ metadata แต่ **classic queue อยู่บน node เดียว** — เสีย node นั้นก็เสีย queue ไปด้วย **quorum queue** แก้ปัญหานี้ด้วย replication บน Raft: message จะ confirm ก็ต่อเมื่อ replica เกิน majority เก็บแล้ว ทำให้ queue รอดเมื่อ node ส่วนน้อยล่มโดยไม่มี message หาย มันแลกมาด้วย throughput และ latency ที่แย่ลง จึงควรใช้กับ message ที่หายไม่ได้ ส่วน **mirrored queue เก่านั้น deprecated** — อย่าใช้
+</Callout>
+
+export const quizCluster = [
+  {
+    q: 'ใน cluster ของ RabbitMQ, classic queue เก็บ message ของมันไว้ที่ไหนจริง ๆ?',
+    options: [
+      'กระจายเท่า ๆ กันทุก node',
+      'บน node ตัวเดียวที่มันถูก declare เท่านั้น',
+      'บน client',
+      'ในฐานข้อมูลกลางที่แชร์กัน',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'quorum queue ใช้อะไรในการ replicate อย่างปลอดภัย?',
+    options: [
+      'Raft consensus algorithm พร้อม majority quorum',
+      'DNS round-robin',
+      'network disk ที่แชร์กัน',
+      'Message TTL',
+    ],
+    answer: 0,
+  },
+  {
+    q: 'สถานะของ classic mirrored queue เป็นอย่างไร?',
+    options: [
+      'เป็น default ที่แนะนำสำหรับ HA',
+      'Deprecated — quorum queue มาแทนสำหรับระบบใหม่',
+      'จำเป็นสำหรับ clustering',
+      'เร็วกว่า quorum queue ในทุกด้าน',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'trade-off หลักของ quorum queue เทียบกับ classic queue คืออะไร?',
+    options: [
+      'มันรอดจาก node failure ไม่ได้',
+      'throughput ต่ำกว่าและ latency สูงกว่า แลกกับ replication และ message ไม่หาย',
+      'มันเป็น durable ไม่ได้',
+      'มันใช้ได้กับ consumer ตัวเดียวเท่านั้น',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="operations-and-scaling/clustering-and-quorum-queues" questions={quizCluster} />
+
+<ProgressTracker client:visible id="operations-and-scaling/clustering-and-quorum-queues" />

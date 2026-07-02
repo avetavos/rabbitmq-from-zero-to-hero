@@ -1,0 +1,148 @@
+---
+title: 'Work Queues'
+description: 'กระจายงานไปยัง worker หลายตัวที่แข่งกันดึงจาก queue เดียว — round-robin, prefetch สำหรับ fair dispatch และ ack ที่ทำให้ worker crash ได้อย่างปลอดภัย'
+sidebar:
+  order: 2
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Pattern ที่เจอบ่อยที่สุด
+
+**work queue** (หรือเรียก *task queue* / *competing consumers*) คือม้างานของ RabbitMQ producer หนึ่งตัว publish งาน — resize รูปนี้, ส่ง email นี้, สร้าง report นี้ — แล้ว pool ของ **worker** แชร์งานกัน แต่ละงานไปหา worker ตัวเดียว
+
+นี่คือวิธี scale background job งานเยอะไป? เพิ่ม worker บน queue เดิม พวกมันแข่งกันดึง message และ RabbitMQ ส่งแต่ละ message ให้ตัวใดตัวหนึ่ง
+
+<Mermaid title="queue เดียว, worker แข่งกันหลายตัว" code={wqDiagram} />
+
+export const wqDiagram = `flowchart LR
+  p["Producer\n(publishes tasks)"] --> q["Queue: tasks"]
+  q --> w1["Worker 1"]
+  q --> w2["Worker 2"]
+  q --> w3["Worker 3"]`;
+
+## Round-robin และจุดอ่อนของมัน
+
+โดย default RabbitMQ ส่ง message แบบ **round-robin**: worker 1, worker 2, worker 3, worker 1 วนไป โดยไม่สนว่าแต่ละ worker ยุ่งแค่ไหน ซึ่งโอเคถ้าทุกงานใช้เวลาเท่ากัน แต่ถ้า worker 1 ได้งานช้าติด ๆ กัน ส่วน worker 2 ได้งานเร็ว round-robin ก็ยังป้อนงานเท่ากัน worker 1 เลยตกงานค้าง ส่วน worker 2 นั่งว่าง
+
+ตัวแก้คือ **prefetch** (`basic.qos`): บอก RabbitMQ ว่า "อย่าเพิ่งให้ message ใหม่กับ worker จนกว่ามันจะ ack ตัวที่แล้ว" ตั้ง prefetch เป็น 1 worker จะถือ unacked task ได้ทีละตัว worker ที่ช้าก็จะดึงงานถัดไปช้าลงเอง worker ที่ยุ่งจึงได้งานน้อยลงตามธรรมชาติ วิธีนี้เปลี่ยน round-robin ให้เป็น **fair dispatch**
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    const channel = await conn.createChannel();
+    await channel.assertQueue('tasks', { durable: true });
+
+    // Fair dispatch: at most one unacked message per worker.
+    await channel.prefetch(1);
+
+    channel.consume('tasks', async (msg) => {
+      if (!msg) return;
+      await doWork(msg.content.toString()); // process the task
+      channel.ack(msg);                     // only now ask for the next
+    }, { noAck: false });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    channel = conn.channel()
+    channel.queue_declare(queue="tasks", durable=True)
+
+    # Fair dispatch: at most one unacked message per worker.
+    channel.basic_qos(prefetch_count=1)
+
+    def on_task(ch, method, properties, body):
+        do_work(body.decode())                       # process the task
+        ch.basic_ack(delivery_tag=method.delivery_tag)  # ask for the next
+
+    channel.basic_consume(queue="tasks", on_message_callback=on_task)
+    channel.start_consuming()
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    ch, _ := conn.Channel()
+    ch.QueueDeclare("tasks", true, false, false, false, nil)
+
+    // Fair dispatch: at most one unacked message per worker.
+    ch.Qos(1, 0, false)
+
+    msgs, _ := ch.Consume("tasks", "", false, false, false, false, nil)
+    for d := range msgs {
+        doWork(string(d.Body)) // process the task
+        d.Ack(false)           // only now ask for the next
+    }
+    ```
+  </TabItem>
+</Tabs>
+
+## ack ทำให้ worker crash ได้อย่างปลอดภัย
+
+สังเกต `noAck: false` / manual ack ข้างบน นี่คือครึ่งหลังของ work queue ที่เชื่อถือได้ เพราะ worker ack **หลัง** งานเสร็จเท่านั้น worker ที่ crash กลางคันจึงยังไม่ได้ ack — RabbitMQ เลย redeliver งานนั้นให้ worker ตัวอื่น ไม่มีอะไรหายเงียบ ๆ
+
+จับคู่กับ **durable queue** และ **persistent message** (จากโมดูล reliability) แล้ว task queue ของคุณจะรอดทั้ง worker crash *และ* broker restart
+
+## การจูน prefetch
+
+prefetch เป็น 1 ปลอดภัยสุดและให้ dispatch ที่แฟร์สุด แต่เพิ่ม round-trip ต่อ message สำหรับงานเร็วและสม่ำเสมอ prefetch สูงขึ้น (เช่น 10–50) จะทำให้ worker มีงานป้อนตลอดและ throughput สูง trade-off คือ:
+
+| Prefetch | ผล |
+|----------|-----|
+| **1** | dispatch แฟร์สุด, throughput ต่ำสุด, ปลอดภัยสุดสำหรับงานช้า/ไม่สม่ำเสมอ |
+| **ปานกลาง (10–50)** | throughput ดีสำหรับงานเร็ว, แฟร์น้อยลงบ้าง |
+| **ไม่จำกัด (0)** | throughput สูงสุด แต่ worker ตัวเดียวอาจกวาด backlog ไปหมดจน worker อื่นอด |
+
+<Callout title="The one-line takeaway">
+work queue แชร์งานให้ worker ที่แข่งกันบน queue เดียว — scale ด้วยการเพิ่ม worker ตั้ง **prefetch** เพื่อให้ได้ fair dispatch แทน round-robin แบบมืด ๆ (เริ่มที่ 1, เพิ่มขึ้นสำหรับงานเร็วที่สม่ำเสมอ) และ **ack หลังประมวลผลเสร็จเท่านั้น** เพื่อให้งานของ worker ที่ crash ถูก redeliver แทนที่จะหาย
+</Callout>
+
+export const quizWq = [
+  {
+    q: 'work queue ให้อะไรกับเรา?',
+    options: [
+      'copy ของแต่ละ message ให้ทุก worker',
+      'การกระจายงาน — แต่ละ message ไปหา worker ตัวเดียวจากหลายตัวที่แข่งกัน',
+      'การันตี ordering ของ message ข้าม worker',
+      'เข้ารหัสงานอัตโนมัติ',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไมต้องตั้ง prefetch (basic.qos) เป็นค่าต่ำ?',
+    options: [
+      'เพื่อบีบอัด message',
+      'เพื่อไม่ให้ RabbitMQ กอง unacked message ใส่ worker ที่ยุ่งอยู่ — ทำให้ได้ fair dispatch',
+      'เพื่อทำให้ message durable',
+      'เพื่อ route ตาม header',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'worker crash หลังรับงานแต่ก่อน ack เกิดอะไรขึ้น?',
+    options: [
+      'งานหาย',
+      'งานถูก redeliver ไปยัง worker ตัวอื่น เพราะยังไม่เคย ack',
+      'producer ถูกแจ้งให้ส่งใหม่',
+      'queue ถูกลบ',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ข้อเสียของ prefetch แบบไม่จำกัดคืออะไร?',
+    options: [
+      'message กลายเป็น unroutable',
+      'worker ตัวเดียวอาจกวาด backlog ไปหมดจน worker อื่นอด',
+      'queue เลิกเป็น durable',
+      'ack เลิกทำงาน',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="consumer-patterns/work-queues" questions={quizWq} />
+
+<ProgressTracker client:visible id="consumer-patterns/work-queues" />

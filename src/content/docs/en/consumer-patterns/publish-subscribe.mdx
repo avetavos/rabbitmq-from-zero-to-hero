@@ -1,0 +1,153 @@
+---
+title: 'Publish/Subscribe'
+description: 'Broadcast one event to many independent consumers — each with its own queue — and how that differs from a shared work queue.'
+sidebar:
+  order: 3
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## One event, many reactions
+
+Sometimes a single event should trigger several *unrelated* things. An order is placed, and independently: the email service sends a confirmation, the analytics service records it, and the cache service invalidates a page. None of them knows about the others, and each must get its own copy of the event.
+
+That is **publish/subscribe**, and the mechanism is a **fanout exchange** (or a topic exchange when you also want filtering) with **one queue per subscriber**.
+
+<Mermaid title="A fanout exchange copies each event to every subscriber's queue" code={psDiagram} />
+
+export const psDiagram = `flowchart LR
+  p["Producer\n(order placed)"] --> x["fanout exchange"]
+  x --> qe["queue: email"] --> se["email service"]
+  x --> qa["queue: analytics"] --> sa["analytics service"]
+  x --> qc["queue: cache"] --> sc["cache service"]`;
+
+## The crucial difference from a work queue
+
+This is the distinction the whole module hinges on, so make it concrete:
+
+| | Work queue | Publish/subscribe |
+|--|-----------|-------------------|
+| **Queues** | One shared queue | One queue per subscriber |
+| **Each message goes to** | Exactly one worker | Every subscriber (a copy each) |
+| **Add a consumer to...** | Increase throughput | Add an independent reaction |
+| **Exchange** | Often the default/direct | Fanout (or topic) |
+
+If three "subscribers" all bound the *same* queue, you'd have a work queue by accident — the message would go to only one of them. Pub/sub requires **each subscriber to declare and bind its own queue**.
+
+## Each subscriber binds its own queue
+
+A common, clean setup: each subscriber declares an **exclusive, auto-delete** queue (unique to that consumer instance) and binds it to the shared fanout exchange. The exchange copies every message into every bound queue.
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    const channel = await conn.createChannel();
+    await channel.assertExchange('orders', 'fanout', { durable: true });
+
+    // Each subscriber gets its own queue.
+    const { queue } = await channel.assertQueue('', { exclusive: true });
+    await channel.bindQueue(queue, 'orders', '');
+
+    channel.consume(queue, (msg) => {
+      if (!msg) return;
+      handleOrderEvent(msg.content.toString());
+      channel.ack(msg);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    channel = conn.channel()
+    channel.exchange_declare(exchange="orders", exchange_type="fanout", durable=True)
+
+    # Each subscriber gets its own queue.
+    result = channel.queue_declare(queue="", exclusive=True)
+    queue = result.method.queue
+    channel.queue_bind(exchange="orders", queue=queue)
+
+    def on_event(ch, method, properties, body):
+        handle_order_event(body.decode())
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+    channel.basic_consume(queue=queue, on_message_callback=on_event)
+    channel.start_consuming()
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    ch, _ := conn.Channel()
+    ch.ExchangeDeclare("orders", "fanout", true, false, false, false, nil)
+
+    // Each subscriber gets its own queue.
+    q, _ := ch.QueueDeclare("", false, false, true, false, nil)
+    ch.QueueBind(q.Name, "", "orders", false, nil)
+
+    msgs, _ := ch.Consume(q.Name, "", false, false, false, false, nil)
+    for d := range msgs {
+        handleOrderEvent(string(d.Body))
+        d.Ack(false)
+    }
+    ```
+  </TabItem>
+</Tabs>
+
+The producer never changes as you add subscribers — it just publishes to the `orders` exchange. Want a new fraud-detection reaction? Start a service that binds its own queue. That is the decoupling payoff from the foundations module, made concrete.
+
+## Durable subscribers vs ephemeral ones
+
+Exclusive auto-delete queues vanish when the subscriber disconnects — good for a live dashboard that only cares about events while it's watching. For a subscriber that must **not miss events while it's briefly down** (like the email service), give it a **named, durable** queue instead, so messages accumulate for it and wait until it reconnects.
+
+<Callout title="The one-line takeaway">
+Publish/subscribe broadcasts each event to many independent consumers by giving **each subscriber its own queue** bound to a fanout (or topic) exchange. The producer publishes once and never changes as subscribers come and go. Use exclusive auto-delete queues for ephemeral watchers, durable named queues for subscribers that must not miss events while restarting.
+</Callout>
+
+export const quizPs = [
+  {
+    q: 'In publish/subscribe, how many copies of an event do three subscribers receive?',
+    options: [
+      'One copy total, delivered to one of them',
+      'Three copies — each subscriber gets its own',
+      'None until they ack',
+      'It depends on prefetch',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What mistake turns pub/sub into an accidental work queue?',
+    options: [
+      'Using a durable exchange',
+      'Having all subscribers bind the same shared queue instead of one queue each',
+      'Setting prefetch to 1',
+      'Publishing with a routing key',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Which exchange type is the natural fit for pure broadcast?',
+    options: [
+      'Direct',
+      'Fanout',
+      'Headers',
+      'The default exchange',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'A subscriber must not miss events while it briefly restarts. What should it use?',
+    options: [
+      'An exclusive auto-delete queue',
+      'A named, durable queue so messages accumulate while it is down',
+      'Auto-ack with no queue',
+      'A shared queue with the other subscribers',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="consumer-patterns/publish-subscribe" questions={quizPs} />
+
+<ProgressTracker client:visible id="consumer-patterns/publish-subscribe" />

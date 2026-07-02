@@ -1,0 +1,177 @@
+---
+title: 'Retry & Backoff'
+description: 'Handle failing messages without tight poison loops — delayed retry via TTL and a dead-letter exchange, a retry counter, and a parking queue after N attempts.'
+sidebar:
+  order: 5
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The naive retry that burns your CPU
+
+A message fails to process — a downstream API is down, the data is temporarily unresolvable. The obvious reaction is to `nack` it with requeue, so it goes back on the queue and gets tried again.
+
+Do that and you've built a **tight poison loop**. The message returns to the front of the queue *immediately*, fails again *immediately*, and your worker spins as fast as it can, hammering the failing dependency and drowning out healthy messages. Immediate requeue is almost never what you want for a real failure.
+
+You need two things the naive approach lacks: a **delay** between attempts, and a **limit** on how many attempts before you give up.
+
+## Delayed retry with TTL + dead-letter exchange
+
+RabbitMQ has no native "retry in 30 seconds" button, but you can build one by combining two features you already know:
+
+- A **retry queue** with a **message TTL** (say 30s) and **no consumer**. Messages sit there and expire.
+- A **dead-letter exchange** on that retry queue pointing *back* at your main queue.
+
+A failed message is published to the retry queue, waits out its TTL, and is then dead-lettered back to the main queue for another attempt — a **delayed** retry, with the delay set by the TTL. No spinning.
+
+<Mermaid title="Delayed retry loop with a parking queue after N attempts" code={retryDiagram} />
+
+export const retryDiagram = `flowchart LR
+  main["main queue"] -->|process fails| check{"attempts < N?"}
+  check -->|yes| retry["retry queue\n(TTL 30s, no consumer)"]
+  retry -->|TTL expires, DLX| main
+  check -->|no| park["parking queue\n(dead — inspect by hand)"]`;
+
+## Count attempts, then park
+
+Delay alone isn't enough — a message that will *never* succeed (malformed, referencing deleted data) would retry forever. So track an **attempt count**, typically in a message header (`x-retry-count` or read from the `x-death` header RabbitMQ adds on each dead-lettering). After N attempts, stop retrying and route the message to a **parking queue** (a dead-letter queue with no automatic consumer) where a human or an alert can inspect it.
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    // Declare a retry queue that dead-letters back to the main exchange after TTL.
+    await channel.assertQueue('tasks.retry', {
+      durable: true,
+      arguments: {
+        'x-message-ttl': 30000,               // wait 30s
+        'x-dead-letter-exchange': '',         // default exchange
+        'x-dead-letter-routing-key': 'tasks', // back to the main queue
+      },
+    });
+
+    channel.consume('tasks', (msg) => {
+      const attempts = (msg.properties.headers?.['x-retry-count'] ?? 0) + 1;
+      try {
+        doWork(msg.content);
+        channel.ack(msg);
+      } catch (err) {
+        if (attempts >= 5) {
+          channel.sendToQueue('tasks.parking', msg.content, { persistent: true });
+        } else {
+          channel.sendToQueue('tasks.retry', msg.content, {
+            persistent: true,
+            headers: { 'x-retry-count': attempts },
+          });
+        }
+        channel.ack(msg); // remove the original; we've re-routed it
+      }
+    });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    channel.queue_declare(queue="tasks.retry", durable=True, arguments={
+        "x-message-ttl": 30000,               # wait 30s
+        "x-dead-letter-exchange": "",         # default exchange
+        "x-dead-letter-routing-key": "tasks", # back to the main queue
+    })
+
+    def on_task(ch, method, props, body):
+        attempts = (props.headers or {}).get("x-retry-count", 0) + 1
+        try:
+            do_work(body)
+            ch.basic_ack(method.delivery_tag)
+        except Exception:
+            if attempts >= 5:
+                ch.basic_publish("", "tasks.parking", body,
+                                 pika.BasicProperties(delivery_mode=2))
+            else:
+                ch.basic_publish("", "tasks.retry", body,
+                                 pika.BasicProperties(delivery_mode=2,
+                                                      headers={"x-retry-count": attempts}))
+            ch.basic_ack(method.delivery_tag)  # remove original; re-routed
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    ch.QueueDeclare("tasks.retry", true, false, false, false, amqp.Table{
+        "x-message-ttl":             int32(30000), // wait 30s
+        "x-dead-letter-exchange":    "",           // default exchange
+        "x-dead-letter-routing-key": "tasks",      // back to the main queue
+    })
+
+    for d := range msgs {
+        attempts := retryCount(d.Headers) + 1
+        if err := doWork(d.Body); err == nil {
+            d.Ack(false)
+        } else if attempts >= 5 {
+            ch.PublishWithContext(ctx, "", "tasks.parking", false, false,
+                amqp.Publishing{DeliveryMode: amqp.Persistent, Body: d.Body})
+            d.Ack(false)
+        } else {
+            ch.PublishWithContext(ctx, "", "tasks.retry", false, false,
+                amqp.Publishing{DeliveryMode: amqp.Persistent, Body: d.Body,
+                    Headers: amqp.Table{"x-retry-count": attempts}})
+            d.Ack(false)
+        }
+    }
+    ```
+  </TabItem>
+</Tabs>
+
+For increasing (exponential) backoff, use several retry queues with growing TTLs — 10s, 1m, 10m — and move the message up the ladder as attempts climb.
+
+<Callout title="The one-line takeaway">
+Never immediate-requeue a failed message — it's a tight poison loop that hammers the failing dependency. Instead build **delayed retry** with a TTL retry queue that dead-letters back to the main queue, track an **attempt count** in a header, and after N attempts route the message to a **parking queue** for a human to inspect. Growing TTLs give you exponential backoff.
+</Callout>
+
+export const quizRetry = [
+  {
+    q: 'Why is immediately nacking-with-requeue a bad retry strategy?',
+    options: [
+      'It deletes the message',
+      'It creates a tight poison loop that spins and hammers the failing dependency',
+      'It duplicates the message to every consumer',
+      'It disables acknowledgements',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'How do you build a "retry after 30 seconds" with RabbitMQ?',
+    options: [
+      'Set a native retry-delay flag on the queue',
+      'Use a retry queue with a message TTL and a dead-letter exchange pointing back to the main queue',
+      'Publish the message 30 times',
+      'Increase the prefetch to 30',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why track an attempt count in a header?',
+    options: [
+      'To compress the message',
+      'So a message that will never succeed is eventually parked instead of retried forever',
+      'To route it by topic',
+      'To make it persistent',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is a "parking" (dead) queue for?',
+    options: [
+      'Faster delivery of healthy messages',
+      'Holding messages that exhausted their retries so a human can inspect them',
+      'Storing acknowledgements',
+      'Load-balancing across workers',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="consumer-patterns/retry-and-backoff" questions={quizRetry} />
+
+<ProgressTracker client:visible id="consumer-patterns/retry-and-backoff" />

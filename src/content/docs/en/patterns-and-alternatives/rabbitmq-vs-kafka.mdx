@@ -1,0 +1,104 @@
+---
+title: 'RabbitMQ vs Kafka'
+description: 'Queue semantics versus a replayable log — the smart-broker/dumb-consumer model against the dumb-broker/smart-consumer model — and how to choose.'
+sidebar:
+  order: 3
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## Two different philosophies
+
+RabbitMQ and Kafka both move messages between services, but they are built on opposite ideas, and the difference decides which one you should use.
+
+- **RabbitMQ is a smart broker with a dumb consumer.** The broker does the hard work — routing, tracking who has acknowledged what, redelivering failures. A message is delivered, acknowledged, and then **removed**. The consumer just processes and acks.
+- **Kafka is a dumb broker with a smart consumer.** The broker is essentially an append-only **log**: it writes messages to disk and keeps them. It does no routing and forgets nothing on consume. Each consumer tracks its own position (an **offset**) and can rewind and re-read.
+
+That one difference — *remove on ack* versus *retain and track offsets* — cascades into everything else.
+
+<Mermaid title="Consume-and-delete queue vs a retained log with offsets" code={vsDiagram} />
+
+export const vsDiagram = `flowchart TB
+  subgraph rmq["RabbitMQ — queue"]
+    m1["msg"] --> qd["deliver"] --> ackd["ack"] --> gone["removed"]
+  end
+  subgraph kafka["Kafka — log"]
+    log["[0][1][2][3][4] retained"]
+    ca["consumer A at offset 2"] --> log
+    cb["consumer B at offset 4"] --> log
+  end`;
+
+## The honest comparison
+
+| | RabbitMQ | Kafka |
+|--|----------|-------|
+| **Core model** | Queue — deliver then delete | Log — append and retain |
+| **Broker role** | Smart: routes, tracks acks, redelivers | Simple: stores an ordered log |
+| **After consume** | Message removed on ack | Message retained; offset advances |
+| **Replay** | No (it's gone once acked) | Yes — rewind the offset and re-read |
+| **Routing** | Rich (direct/topic/fanout/headers) | By partition/topic; logic in consumers |
+| **Ordering** | Per queue | Strong within a partition |
+| **Throughput** | High; excels at complex routing | Very high; built for firehose streams |
+| **Best at** | Task distribution, RPC, complex routing, per-message workflows | Event streaming, replay, analytics pipelines, huge throughput |
+
+## How to choose
+
+Reach for **RabbitMQ** when you have **discrete units of work** to distribute, need rich routing, or want per-message acknowledgement and retry — background jobs, order processing, request/reply. The message is a *task* that gets done once and disappears.
+
+Reach for **Kafka** when you have a **stream of events** that many independent systems consume at their own pace, when you need **replay** (a new consumer reprocesses history), or when throughput is enormous — event sourcing, activity streams, metrics pipelines. The message is a *fact* recorded in a log that stays.
+
+And often the right answer is **both**: Kafka as the durable event backbone, RabbitMQ for task queues and RPC between services. They are not competitors so much as different tools.
+
+<Callout title="The one-line takeaway">
+RabbitMQ is a **smart broker** that deletes a message once it's acknowledged — perfect for distributing discrete tasks with rich routing and retry. Kafka is a **retained, replayable log** where consumers track their own offset — perfect for event streams that many systems reprocess. Choose by asking: is this message a *task to do once* (RabbitMQ) or a *fact to keep and replay* (Kafka)?
+</Callout>
+
+export const quizKafka = [
+  {
+    q: 'What happens to a message in RabbitMQ after a consumer acknowledges it?',
+    options: [
+      'It is retained for replay',
+      'It is removed from the queue',
+      'It is copied to every other queue',
+      'It is written to a permanent log',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'How does a Kafka consumer track what it has read?',
+    options: [
+      'The broker deletes messages it has sent',
+      'Each consumer tracks its own offset and can rewind to re-read',
+      'It sends an ack that deletes the message',
+      'It cannot re-read messages',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Which workload is a better fit for Kafka than RabbitMQ?',
+    options: [
+      'Distributing background image-resize tasks to workers',
+      'Request/reply RPC between two services',
+      'An event stream many independent systems consume and occasionally replay from history',
+      'A simple work queue with per-message retry',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'Which statement best captures the core difference?',
+    options: [
+      'RabbitMQ is always faster than Kafka',
+      'RabbitMQ is a smart broker that removes messages on ack; Kafka is a retained log with consumer-tracked offsets',
+      'Kafka supports routing; RabbitMQ does not',
+      'They are identical apart from the name',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="patterns-and-alternatives/rabbitmq-vs-kafka" questions={quizKafka} />
+
+<ProgressTracker client:visible id="patterns-and-alternatives/rabbitmq-vs-kafka" />

@@ -1,0 +1,120 @@
+---
+title: 'What Is a Message Queue?'
+description: 'The problem asynchronous messaging solves — decoupling services, buffering load spikes, and surviving failures — and when a queue is the right tool.'
+sidebar:
+  order: 2
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The problem with calling services directly
+
+Imagine an order service that, when an order is placed, must: charge a card, send a confirmation email, update inventory, and notify the warehouse. The obvious approach is to call each service directly and wait for each to finish.
+
+That works until it doesn't:
+
+- **The email service is slow.** Now placing an order is slow, because you're blocked waiting on email.
+- **The warehouse service is down.** Now the whole order fails — even though the payment succeeded.
+- **A flash sale hits.** Ten thousand orders per second slam every downstream service at once, and the slowest one falls over.
+
+The root problem: **direct calls couple the caller's fate to the callee's.** If the callee is slow, you're slow. If it's down, you fail. If you spike, it spikes.
+
+## What a queue changes
+
+A message queue puts a buffer in the middle. The order service **publishes** a message ("order 123 placed") and immediately returns. Each downstream service **consumes** those messages on its own schedule.
+
+<Mermaid title="Direct coupling versus a buffering queue" code={couplingDiagram} />
+
+export const couplingDiagram = `flowchart TB
+  subgraph direct["Direct calls — coupled fate"]
+    o1["order service"] -->|blocks| e1["email (slow)"]
+    o1 -->|fails if down| w1["warehouse"]
+  end
+  subgraph queued["Via a queue — decoupled"]
+    o2["order service"] -->|publish, return| q["queue (buffers)"]
+    q --> e2["email consumer\n(own pace)"]
+    q --> w2["warehouse consumer\n(catches up later)"]
+  end`;
+
+Three things fall out of that one change:
+
+1. **Decoupling.** The producer doesn't know or care who consumes, how many consumers there are, or whether they're up right now.
+2. **Buffering (load leveling).** A spike of 10,000 messages sits safely in the queue; consumers drain it at a steady rate instead of being crushed.
+3. **Resilience.** If a consumer is down, messages wait in the queue. When it comes back, it catches up — nothing is lost.
+
+## The trade-off: you gain async, you lose "immediately"
+
+Queues are not free. In exchange for decoupling you accept:
+
+- **Eventual, not immediate.** The email is sent *soon*, not before the HTTP response returns. Your UX and data model must tolerate that gap.
+- **More moving parts.** The broker is now critical infrastructure you must run, monitor, and secure.
+- **Harder debugging.** A request no longer has one linear stack trace; it fans out across producers, queues, and consumers.
+
+## When to use a queue (and when not to)
+
+Reach for a message queue when:
+
+- Work can happen **asynchronously** — the caller doesn't need the result to respond.
+- You need to **absorb spikes** or smooth out bursty load.
+- Services should be **decoupled** so one failing doesn't cascade.
+- You want to **fan work out** to many workers or **broadcast** an event to many subscribers.
+
+Stay synchronous (plain HTTP/gRPC) when:
+
+- The caller **needs the answer now** to continue (e.g. "is this username taken?").
+- The interaction is a simple, fast request/response with no spikes.
+- Adding a broker's operational weight isn't worth it for the problem at hand.
+
+<Callout title="The one-line takeaway">
+A message queue puts a buffer between producers and consumers, which buys you three things — decoupling, load-leveling, and resilience — at the cost of immediacy and extra moving parts. Use it for async work, spiky load, and fan-out; stay synchronous when the caller genuinely needs the answer right now.
+</Callout>
+
+export const quizWhat = [
+  {
+    q: 'What is the root problem with services calling each other directly?',
+    options: [
+      'Direct calls cannot send JSON',
+      'The caller\'s fate is coupled to the callee\'s — slow, down, or spiking all propagate',
+      'HTTP is always slower than messaging',
+      'You can only call one service at a time',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Which three benefits does adding a queue provide?',
+    options: [
+      'Encryption, compression, and caching',
+      'Decoupling, buffering (load-leveling), and resilience',
+      'Lower latency, stronger typing, and free retries',
+      'Indexing, sharding, and replication',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What do you give up by moving work behind a queue?',
+    options: [
+      'The ability to send large messages',
+      'Immediacy — the work happens soon, not before the response returns',
+      'The ability to have multiple consumers',
+      'Any form of ordering',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Which task is a poor fit for a message queue?',
+    options: [
+      'Sending a confirmation email after an order',
+      'Resizing an uploaded image in the background',
+      'Answering "is this username available?" for a signup form that needs the result now',
+      'Absorbing a spike of analytics events',
+    ],
+    answer: 2,
+  },
+];
+
+<Quiz client:visible id="messaging-foundations/what-is-a-message-queue" questions={quizWhat} />
+
+<ProgressTracker client:visible id="messaging-foundations/what-is-a-message-queue" />

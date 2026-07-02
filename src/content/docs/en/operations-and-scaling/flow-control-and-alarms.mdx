@@ -1,0 +1,99 @@
+---
+title: 'Flow Control & Alarms'
+description: 'What happens when producers outrun consumers — memory and disk alarms, per-connection flow control, lazy queues, and designing to avoid unbounded backlogs.'
+sidebar:
+  order: 5
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The fundamental imbalance
+
+A queue only stays healthy if, over time, **consumers keep up with producers**. When publishers persistently outrun consumers, the backlog grows, memory fills, and something has to give. RabbitMQ has several mechanisms — from gentle to firm — to keep an overloaded broker from crashing.
+
+## Alarms block publishers (backpressure by design)
+
+You met alarms last lesson; here is what they *feel* like. When the **memory** high-watermark or the **disk** free-space limit is crossed, RabbitMQ raises an alarm and **blocks all publishing connections**. Publishers are paused — their `publish` calls stop making progress — while consumers keep draining the queues.
+
+<Mermaid title="An alarm turns backpressure back onto publishers" code={alarmDiagram} />
+
+export const alarmDiagram = `flowchart TB
+  fast["Publishers\n(too fast)"] --> q["Queues fill\nmemory rises"]
+  q --> alarm["Memory high-watermark\ncrossed → ALARM"]
+  alarm --> block["Publishing connections\nBLOCKED"]
+  cons["Consumers keep\ndraining"] --> q
+  block --> recover["memory drops →\nalarm clears →\npublishers resume"]`;
+
+This is **intentional backpressure**: rather than accept messages until it dies, the broker pushes the pressure back onto producers. A well-behaved producer notices the block (clients expose a "connection blocked" signal) and slows down. A poorly-behaved one just piles up blocked publishes. Either way, the broker survives.
+
+## Per-connection flow control
+
+Even before a global alarm, RabbitMQ applies **internal flow control** per connection: if a publisher sends faster than the broker can route and persist, the broker throttles that specific connection so it can't overwhelm the internal pipeline. In the management UI, such a connection shows the state **`flow`** — a normal, healthy signal that this publisher is being paced, not an error.
+
+## Lazy queues and large backlogs
+
+By default, classic queues try to keep messages in memory for speed. A very deep queue (millions of messages) can therefore consume a lot of RAM and trip the memory alarm. **Lazy queues** (and the newer classic-queue v2 storage) instead keep messages on disk, trading a little latency for a much smaller memory footprint — the right choice when backlogs can grow large. Quorum queues are always disk-based and handle deep backlogs well.
+
+## Design so alarms stay rare
+
+Alarms and flow control are safety nets, not a running mode. If they fire regularly, the design is wrong. To keep them rare:
+
+- **Scale consumers** so the ack rate matches the publish rate over time.
+- **Bound your queues** with a `max-length` or TTL so a runaway producer can't grow the queue without limit (drop or dead-letter the overflow instead).
+- **Use lazy or quorum queues** for workloads that can legitimately build deep backlogs.
+- **Handle "connection blocked"** in producers — back off instead of hammering.
+- **Alert on queue depth trending up** so you scale consumers *before* the memory alarm fires.
+
+<Callout title="The one-line takeaway">
+When producers outrun consumers, RabbitMQ protects itself: **memory/disk alarms block publishers**, and **per-connection flow control** paces a too-fast publisher (the `flow` state). **Lazy/quorum queues** keep deep backlogs on disk instead of RAM. But these are safety nets — design so they stay rare by scaling consumers, **bounding queues** with max-length/TTL, and reacting to a rising queue depth before the alarm ever fires.
+</Callout>
+
+export const quizFlow = [
+  {
+    q: 'What does RabbitMQ do to publishers when a memory or disk alarm fires?',
+    options: [
+      'Speeds them up',
+      'Blocks them (pauses publishing) while consumers keep draining the backlog',
+      'Deletes their messages',
+      'Disconnects all consumers',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'A connection shows the state "flow" in the management UI. What does that mean?',
+    options: [
+      'The connection has failed',
+      'Per-connection flow control is pacing a publisher that is sending faster than the broker can handle — a normal signal',
+      'The queue is empty',
+      'The consumer has crashed',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What problem do lazy queues (and classic v2 / quorum storage) address?',
+    options: [
+      'Slow serialization',
+      'Deep backlogs consuming too much RAM — they keep messages on disk instead',
+      'Missing acknowledgements',
+      'Routing key mismatches',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is the best way to keep alarms and flow control rare?',
+    options: [
+      'Turn alarms off',
+      'Scale consumers to match publish rate and bound queues with max-length/TTL so backlogs can\'t grow without limit',
+      'Publish faster',
+      'Use a single giant queue',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="operations-and-scaling/flow-control-and-alarms" questions={quizFlow} />
+
+<ProgressTracker client:visible id="operations-and-scaling/flow-control-and-alarms" />

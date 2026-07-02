@@ -1,0 +1,80 @@
+---
+title: 'Messaging Foundations'
+description: 'Why asynchronous messaging exists, what RabbitMQ and AMQP are, the core vocabulary, and your first publish/consume — the groundwork for everything else.'
+sidebar:
+  order: 1
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The idea in one sentence
+
+**RabbitMQ is a message broker: a piece of infrastructure that sits between the services that *produce* work and the services that *consume* it, so the two never have to talk directly.** A producer drops a message into RabbitMQ and moves on; a consumer picks it up whenever it's ready.
+
+That indirection — a buffer in the middle — is the whole point. It lets systems absorb spikes, survive a consumer being down, and scale the two sides independently.
+
+## What this module covers
+
+| Lesson | What you'll learn |
+|--------|-------------------|
+| What is a message queue? | The problem async messaging solves — decoupling, buffering, and resilience |
+| RabbitMQ & AMQP | What RabbitMQ is and the AMQP 0-9-1 model it implements |
+| Core concepts | Producer, consumer, connection, channel, exchange, queue, binding, message |
+| Your first queue | Publish and consume a message in Node, Python, and Go |
+
+## Why start here
+
+Almost every RabbitMQ feature — exchanges, acknowledgements, dead-letter queues, confirms — is a refinement of one simple flow. Get this picture in your head first:
+
+<Mermaid title="The shape of every RabbitMQ system" code={shapeDiagram} />
+
+export const shapeDiagram = `flowchart LR
+  prod["Producer\n(sends work)"] -->|publish| ex["Exchange\n(routes)"]
+  ex -->|binding| q["Queue\n(buffers)"]
+  q -->|deliver| cons["Consumer\n(does work)"]`;
+
+A producer publishes to an **exchange**, the exchange routes the message to one or more **queues**, and consumers read from those queues. The producer never knows who consumes, or when, or how many consumers there are. Everything that follows is about controlling and hardening that flow.
+
+<Callout title="The mental shift">
+Synchronous calls (HTTP, gRPC) ask a question and **wait for the answer** — the caller is blocked and the callee must be up right now. Messaging is **fire-and-forget**: you hand work to the broker and carry on, and the work gets done eventually by whoever is listening. Different tool, different guarantees — and the rest of this course is about those guarantees.
+</Callout>
+
+export const quizIndex = [
+  {
+    q: 'What is RabbitMQ, in one sentence?',
+    options: [
+      'A relational database',
+      'A message broker that sits between producers and consumers so they never talk directly',
+      'A load balancer for HTTP traffic',
+      'A caching layer',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is the core benefit of putting a broker between two services?',
+    options: [
+      'It makes every call faster than a direct call',
+      'It decouples them — they can scale independently and survive each other being down',
+      'It removes the need for a database',
+      'It encrypts all traffic automatically',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'How does messaging differ from a synchronous HTTP/gRPC call?',
+    options: [
+      'It always returns a response immediately',
+      'It is fire-and-forget — you hand work to the broker and carry on, instead of blocking for an answer',
+      'It requires both services to be online at the same time',
+      'It cannot carry structured data',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="messaging-foundations/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="messaging-foundations/index" />

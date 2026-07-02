@@ -1,0 +1,153 @@
+---
+title: 'Publish/Subscribe'
+description: 'broadcast หนึ่ง event ไปยัง consumer หลายตัวที่เป็นอิสระ — แต่ละตัวมี queue ของตัวเอง — และมันต่างจาก work queue ที่แชร์ queue กันอย่างไร'
+sidebar:
+  order: 3
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## หนึ่ง event หลาย reaction
+
+บางครั้ง event เดียวควร trigger หลายอย่างที่ *ไม่เกี่ยวกัน* order ถูกสร้าง แล้วต่างคนต่างทำ: email service ส่ง confirmation, analytics service บันทึกไว้, cache service invalidate หน้า แต่ละตัวไม่รู้จักตัวอื่น และแต่ละตัวต้องได้ copy ของ event ของตัวเอง
+
+นั่นคือ **publish/subscribe** และกลไกคือ **fanout exchange** (หรือ topic exchange เมื่ออยากได้ filter ด้วย) กับ **queue หนึ่งตัวต่อ subscriber**
+
+<Mermaid title="fanout exchange copy แต่ละ event ไปยัง queue ของทุก subscriber" code={psDiagram} />
+
+export const psDiagram = `flowchart LR
+  p["Producer\n(order placed)"] --> x["fanout exchange"]
+  x --> qe["queue: email"] --> se["email service"]
+  x --> qa["queue: analytics"] --> sa["analytics service"]
+  x --> qc["queue: cache"] --> sc["cache service"]`;
+
+## ความต่างสำคัญจาก work queue
+
+นี่คือจุดที่ทั้งโมดูลนี้ยึดไว้ ทำให้เป็นรูปธรรมกันเลย:
+
+| | Work queue | Publish/subscribe |
+|--|-----------|-------------------|
+| **Queue** | queue เดียวที่แชร์กัน | queue หนึ่งตัวต่อ subscriber |
+| **แต่ละ message ไปหา** | worker ตัวเดียว | ทุก subscriber (ตัวละ copy) |
+| **เพิ่ม consumer เพื่อ...** | เพิ่ม throughput | เพิ่ม reaction ที่เป็นอิสระ |
+| **Exchange** | มักเป็น default/direct | fanout (หรือ topic) |
+
+ถ้า "subscriber" สามตัว bind queue *เดียวกัน* คุณจะได้ work queue โดยไม่ตั้งใจ — message จะไปหาแค่ตัวเดียว pub/sub ต้องให้ **แต่ละ subscriber declare และ bind queue ของตัวเอง**
+
+## แต่ละ subscriber bind queue ของตัวเอง
+
+setup ที่สะอาดและพบบ่อย: แต่ละ subscriber declare queue แบบ **exclusive, auto-delete** (unique ต่อ consumer instance นั้น) แล้ว bind เข้ากับ fanout exchange ที่แชร์กัน exchange จะ copy ทุก message เข้าไปในทุก queue ที่ bind ไว้
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    const channel = await conn.createChannel();
+    await channel.assertExchange('orders', 'fanout', { durable: true });
+
+    // Each subscriber gets its own queue.
+    const { queue } = await channel.assertQueue('', { exclusive: true });
+    await channel.bindQueue(queue, 'orders', '');
+
+    channel.consume(queue, (msg) => {
+      if (!msg) return;
+      handleOrderEvent(msg.content.toString());
+      channel.ack(msg);
+    });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    channel = conn.channel()
+    channel.exchange_declare(exchange="orders", exchange_type="fanout", durable=True)
+
+    # Each subscriber gets its own queue.
+    result = channel.queue_declare(queue="", exclusive=True)
+    queue = result.method.queue
+    channel.queue_bind(exchange="orders", queue=queue)
+
+    def on_event(ch, method, properties, body):
+        handle_order_event(body.decode())
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+    channel.basic_consume(queue=queue, on_message_callback=on_event)
+    channel.start_consuming()
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    ch, _ := conn.Channel()
+    ch.ExchangeDeclare("orders", "fanout", true, false, false, false, nil)
+
+    // Each subscriber gets its own queue.
+    q, _ := ch.QueueDeclare("", false, false, true, false, nil)
+    ch.QueueBind(q.Name, "", "orders", false, nil)
+
+    msgs, _ := ch.Consume(q.Name, "", false, false, false, false, nil)
+    for d := range msgs {
+        handleOrderEvent(string(d.Body))
+        d.Ack(false)
+    }
+    ```
+  </TabItem>
+</Tabs>
+
+producer ไม่เปลี่ยนเลยเวลาคุณเพิ่ม subscriber — มันแค่ publish ไปที่ exchange `orders` อยากได้ reaction ใหม่สำหรับ fraud detection? เปิด service ที่ bind queue ของตัวเอง นี่คือผลตอบแทนด้าน decoupling จากโมดูล foundations ในรูปธรรม
+
+## subscriber แบบ durable เทียบกับแบบ ephemeral
+
+queue แบบ exclusive auto-delete จะหายไปเมื่อ subscriber disconnect — เหมาะกับ dashboard สด ๆ ที่สนใจ event เฉพาะตอนกำลังดูอยู่ ส่วน subscriber ที่ต้อง **ไม่พลาด event ตอนที่ตัวเองล่มชั่วครู่** (เช่น email service) ให้ใช้ queue แบบ **named, durable** แทน เพื่อให้ message สะสมรอไว้จนกว่ามันจะ reconnect
+
+<Callout title="The one-line takeaway">
+publish/subscribe broadcast แต่ละ event ไปยัง consumer หลายตัวที่เป็นอิสระ โดยให้ **แต่ละ subscriber มี queue ของตัวเอง** ที่ bind กับ fanout (หรือ topic) exchange producer publish ครั้งเดียวและไม่เปลี่ยนเลยเมื่อ subscriber เข้า-ออก ใช้ exclusive auto-delete queue สำหรับ watcher ชั่วคราว, durable named queue สำหรับ subscriber ที่ต้องไม่พลาด event ตอน restart
+</Callout>
+
+export const quizPs = [
+  {
+    q: 'ใน publish/subscribe subscriber สามตัวได้ copy ของ event กี่ชุด?',
+    options: [
+      'ชุดเดียวรวม ส่งให้ตัวใดตัวหนึ่ง',
+      'สามชุด — แต่ละ subscriber ได้ของตัวเอง',
+      'ไม่ได้เลยจนกว่าจะ ack',
+      'ขึ้นกับ prefetch',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ความผิดพลาดใดที่เปลี่ยน pub/sub ให้กลายเป็น work queue โดยไม่ตั้งใจ?',
+    options: [
+      'ใช้ durable exchange',
+      'ให้ subscriber ทุกตัว bind queue เดียวกันที่แชร์กัน แทนที่จะมี queue ต่อตัว',
+      'ตั้ง prefetch เป็น 1',
+      'publish พร้อม routing key',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'exchange type ใดที่เหมาะกับ broadcast ล้วน ๆ ที่สุด?',
+    options: [
+      'Direct',
+      'Fanout',
+      'Headers',
+      'default exchange',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'subscriber ต้องไม่พลาด event ตอนที่มัน restart สั้น ๆ ควรใช้อะไร?',
+    options: [
+      'queue แบบ exclusive auto-delete',
+      'queue แบบ named, durable เพื่อให้ message สะสมไว้ตอนมันล่ม',
+      'auto-ack โดยไม่มี queue',
+      'queue ที่แชร์กับ subscriber ตัวอื่น',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="consumer-patterns/publish-subscribe" questions={quizPs} />
+
+<ProgressTracker client:visible id="consumer-patterns/publish-subscribe" />

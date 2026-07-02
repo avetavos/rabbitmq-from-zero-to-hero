@@ -1,0 +1,154 @@
+---
+title: 'Publisher Confirms'
+description: 'How to know the broker actually accepted your message — publisher confirms, the mandatory flag for unroutable messages, and the throughput trade-off.'
+sidebar:
+  order: 2
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## A plain publish is fire-and-forget — literally
+
+Here is an uncomfortable fact about a basic `publish`: by default it returns nothing. Your client writes the message to the socket and moves on. If the broker was overloaded, the connection dropped at that instant, or the message was rejected, **you never find out**. The message is simply gone, and your code thinks it succeeded.
+
+For a background analytics event, maybe that's fine. For "the customer paid us", it absolutely is not. **Publisher confirms** close this gap.
+
+## Publisher confirms: the broker acks your publish
+
+When you put a channel into **confirm mode**, the broker sends back an acknowledgement for every message once it has taken responsibility for it (routed it to all matching durable queues, and — for persistent messages — written it to disk). You get an `ack` (the broker has it) or, rarely, a `nack` (the broker could not take it).
+
+<Mermaid title="A publish with confirms enabled" code={confirmDiagram} />
+
+export const confirmDiagram = `sequenceDiagram
+  participant P as Publisher
+  participant B as Broker
+  P->>B: publish (confirm mode)
+  B->>B: route + persist
+  B-->>P: ack (I have it)
+  Note over P: safe to consider it sent
+  P->>B: publish (bad case)
+  B-->>P: nack (could not accept)
+  Note over P: retry or alert`;
+
+Confirms are **asynchronous**: the broker streams acks back as it processes messages, so you don't have to block after each publish. High-throughput publishers keep a window of unconfirmed messages in flight and only treat a message as durable once its ack arrives.
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    // amqplib: a confirm channel gives per-message callbacks
+    const channel = await conn.createConfirmChannel();
+
+    channel.publish('orders', 'order.created', Buffer.from(body), { persistent: true },
+      (err) => {
+        if (err) console.error('NACK — message not confirmed, retry:', err);
+        else console.log('ACK — broker has the message');
+      });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    # pika: enable confirms; publish raises/returns on failure
+    channel.confirm_delivery()
+
+    try:
+        channel.basic_publish(
+            exchange="orders", routing_key="order.created", body=body,
+            properties=pika.BasicProperties(delivery_mode=2),  # persistent
+            mandatory=True,
+        )
+        print("ACK — broker has the message")
+    except pika.exceptions.UnroutableError:
+        print("returned — no queue matched")
+    except pika.exceptions.NackError:
+        print("NACK — broker could not accept, retry")
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    ch.Confirm(false) // put channel in confirm mode
+    confirms := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
+
+    ch.PublishWithContext(ctx, "orders", "order.created", true, false, amqp.Publishing{
+        DeliveryMode: amqp.Persistent,
+        Body:         body,
+    })
+
+    if c := <-confirms; c.Ack {
+        log.Println("ACK — broker has the message")
+    } else {
+        log.Println("NACK — broker could not accept, retry")
+    }
+    ```
+  </TabItem>
+</Tabs>
+
+## The mandatory flag: catch unroutable messages
+
+Confirms tell you the *broker* got the message — but a message routed to **zero** queues is still, from the broker's view, handled successfully. It just vanishes. If you published `order.created` but no queue was bound for it (a typo, a missing binding), the message is dropped and you'd never know.
+
+The **mandatory** flag fixes this: if a mandatory message can't be routed to any queue, the broker **returns** it to the publisher instead of dropping it. Listen for returned messages and you'll catch misrouting immediately.
+
+Together, confirms + mandatory answer both questions: *did the broker accept it?* and *did it actually reach a queue?*
+
+## The trade-off: safety costs throughput
+
+Confirms aren't free. Waiting for an ack after every single publish serializes your publisher and tanks throughput. The healthy middle ground:
+
+- **Async confirms with a window** — keep N messages in flight, handle acks as they stream back. Near-full throughput, full safety.
+- **Batch confirms** — publish a batch, wait for the batch to confirm. Simpler, slightly less throughput.
+- **Publish-and-wait per message** — safest to reason about, slowest. Only for low-volume, critical publishes.
+
+<Callout title="The one-line takeaway">
+A plain publish is silently lossy — the broker never tells you it arrived. **Publisher confirms** make the broker ack each message once it has taken responsibility, and the **mandatory** flag returns messages that matched no queue. Use async confirms with an in-flight window to keep throughput high while never losing a critical publish.
+</Callout>
+
+export const quizConfirms = [
+  {
+    q: 'What happens to a plain publish (no confirms) if the broker fails to accept it?',
+    options: [
+      'The client retries automatically',
+      'You are silently unaware — the message is lost but your code thinks it succeeded',
+      'The publish call throws every time',
+      'The message is queued locally forever',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What does a publisher confirm tell you?',
+    options: [
+      'That a consumer processed the message',
+      'That the broker has taken responsibility for the message (routed and, if persistent, written to disk)',
+      'That the message was compressed',
+      'That the queue is empty',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What does the mandatory flag add on top of confirms?',
+    options: [
+      'It encrypts the message',
+      'It returns the message to the publisher if it could not be routed to any queue',
+      'It forces the message to be persistent',
+      'It guarantees exactly-once delivery',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Why not just wait for a confirm after every single publish?',
+    options: [
+      'It is not allowed by AMQP',
+      'It serializes the publisher and severely reduces throughput — async confirms with a window are better',
+      'Confirms only work in batches',
+      'It would drop the mandatory flag',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="reliability/publisher-confirms" questions={quizConfirms} />
+
+<ProgressTracker client:visible id="reliability/publisher-confirms" />

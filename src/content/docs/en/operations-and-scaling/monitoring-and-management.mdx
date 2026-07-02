@@ -1,0 +1,141 @@
+---
+title: 'Monitoring & Management'
+description: 'The management UI and HTTP API, the metrics that actually matter, Prometheus/Grafana, and the memory and disk alarms that protect the broker.'
+sidebar:
+  order: 4
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## You can't operate what you can't see
+
+RabbitMQ ships with a **management plugin** that gives you a web UI and an HTTP API on port `15672`. Enable it and you can watch queues, connections, channels, and rates live:
+
+```bash
+rabbitmq-plugins enable rabbitmq_management
+# UI at http://localhost:15672  (default guest/guest, localhost only)
+```
+
+The UI is great for eyeballing a problem. For real monitoring you want the **HTTP API** (for scripts and health checks) and the **Prometheus plugin** (`rabbitmq_prometheus`) feeding **Grafana** dashboards and alerts.
+
+## The metrics that actually matter
+
+Dozens of metrics exist; a handful tell you almost everything:
+
+| Signal | What it means | Watch for |
+|--------|---------------|-----------|
+| **Queue depth** (`messages_ready`) | Messages waiting to be delivered | Steadily rising = consumers can't keep up |
+| **Unacked** (`messages_unacknowledged`) | Delivered but not yet acked | High/stuck = a slow or hung consumer |
+| **Publish rate** vs **deliver/ack rate** | Producer vs consumer throughput | Publish > ack for long = backlog growing |
+| **Consumer count** | Consumers on a queue | Dropped to 0 = nobody is working the queue |
+| **Memory & disk** | Broker resource headroom | Near the limit = an alarm is about to fire |
+| **Connections / channels** | Client footprint | Rapidly climbing = connection churn bug |
+
+The single most useful alert is **queue depth trending up** while the consumer count or ack rate is flat — that is a stuck or under-scaled consumer, caught before the queue fills memory.
+
+## Reading it from a script
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    // Query the management HTTP API for a queue's depth.
+    const res = await fetch('http://localhost:15672/api/queues/%2F/orders', {
+      headers: { Authorization: 'Basic ' + btoa('guest:guest') },
+    });
+    const q = await res.json();
+    console.log('ready:', q.messages_ready, 'unacked:', q.messages_unacknowledged);
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    import requests
+
+    # %2F is the URL-encoded default vhost "/"
+    r = requests.get("http://localhost:15672/api/queues/%2F/orders",
+                     auth=("guest", "guest"))
+    q = r.json()
+    print("ready:", q["messages_ready"], "unacked:", q["messages_unacknowledged"])
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    req, _ := http.NewRequest("GET",
+        "http://localhost:15672/api/queues/%2F/orders", nil)
+    req.SetBasicAuth("guest", "guest")
+    resp, _ := http.DefaultClient.Do(req)
+    defer resp.Body.Close()
+    var q struct {
+        Ready  int `json:"messages_ready"`
+        Unack  int `json:"messages_unacknowledged"`
+    }
+    json.NewDecoder(resp.Body).Decode(&q)
+    log.Printf("ready=%d unacked=%d", q.Ready, q.Unack)
+    ```
+  </TabItem>
+</Tabs>
+
+For quick local checks, `rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers` gives the same numbers from the command line.
+
+## Alarms: the broker protecting itself
+
+RabbitMQ watches two resources and raises an **alarm** when either runs low:
+
+- **Memory alarm** — total memory use crosses the high-watermark (default 40% of RAM).
+- **Disk alarm** — free disk falls below the configured limit.
+
+When an alarm is active, RabbitMQ **blocks publishers** (it stops accepting new messages) while continuing to deliver to consumers, so the backlog drains instead of growing. Alarms are a safety mechanism, not a failure — but a *frequently* firing alarm means your consumers are too slow or your queues are unbounded. The next lesson covers exactly what that publisher-blocking feels like and how to design around it.
+
+<Callout title="The one-line takeaway">
+Enable the **management plugin** for the UI + HTTP API, and scrape **Prometheus → Grafana** for real monitoring. Watch a small set of signals — **queue depth, unacked count, publish-vs-ack rate, and consumer count** — and alert when depth trends up while acks are flat (a stuck consumer). RabbitMQ's **memory and disk alarms** block publishers to protect itself; frequent alarms mean your consumers can't keep up.
+</Callout>
+
+export const quizMon = [
+  {
+    q: 'Which single signal best warns of a stuck or under-scaled consumer?',
+    options: [
+      'Message body size',
+      'Queue depth trending up while ack rate / consumer count stays flat',
+      'The number of exchanges',
+      'The broker version',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What does a high, stuck "unacknowledged" count usually indicate?',
+    options: [
+      'Too many exchanges',
+      'A consumer that received messages but is slow or hung and not acking',
+      'The disk is full',
+      'The management plugin is disabled',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What does RabbitMQ do when a memory or disk alarm fires?',
+    options: [
+      'It deletes the oldest messages',
+      'It blocks publishers (stops accepting new messages) while consumers keep draining the backlog',
+      'It shuts down entirely',
+      'It duplicates all queues',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'What is the recommended stack for production monitoring?',
+    options: [
+      'Only the web UI, checked manually',
+      'The Prometheus plugin feeding Grafana dashboards and alerts, plus the HTTP API for scripts',
+      'Reading server log files by hand',
+      'Nothing — RabbitMQ self-heals',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="operations-and-scaling/monitoring-and-management" questions={quizMon} />
+
+<ProgressTracker client:visible id="operations-and-scaling/monitoring-and-management" />

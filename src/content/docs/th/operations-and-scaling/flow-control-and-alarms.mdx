@@ -1,0 +1,99 @@
+---
+title: 'Flow Control & Alarms'
+description: 'เกิดอะไรขึ้นเมื่อ producer วิ่งเร็วกว่า consumer — memory และ disk alarm, per-connection flow control, lazy queue และการออกแบบเลี่ยง backlog ที่โตไม่มีขอบเขต'
+sidebar:
+  order: 5
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ความไม่สมดุลพื้นฐาน
+
+queue จะแข็งแรงได้ก็ต่อเมื่อ **consumer ตาม producer ทัน** ในระยะยาว เมื่อ publisher วิ่งเร็วกว่า consumer อย่างต่อเนื่อง backlog จะโต, memory จะเต็ม และต้องมีอะไรสักอย่างยอมแตก RabbitMQ มีกลไกหลายอย่าง — ตั้งแต่นุ่มนวลไปถึงเด็ดขาด — เพื่อกัน broker ที่ overload ไม่ให้ crash
+
+## alarm block publisher (backpressure โดยตั้งใจ)
+
+คุณเจอ alarm ไปแล้วในบทที่แล้ว นี่คือว่ามัน *รู้สึก* ยังไง เมื่อ **memory** high-watermark หรือ limit ของ **disk** ว่างถูกข้าม RabbitMQ จะยก alarm และ **block ทุก publishing connection** publisher จะถูกหยุด — การเรียก `publish` จะไม่คืบหน้า — ขณะที่ consumer ยังไหล queue ออกต่อ
+
+<Mermaid title="alarm ดัน backpressure กลับไปที่ publisher" code={alarmDiagram} />
+
+export const alarmDiagram = `flowchart TB
+  fast["Publisher\n(เร็วเกินไป)"] --> q["Queue เต็ม\nmemory สูงขึ้น"]
+  q --> alarm["ข้าม memory high-watermark\n→ ALARM"]
+  alarm --> block["publishing connection\nถูก BLOCK"]
+  cons["Consumer ยังไหล\nออกต่อ"] --> q
+  block --> recover["memory ลด →\nalarm เคลียร์ →\npublisher ทำงานต่อ"]`;
+
+นี่คือ **backpressure โดยตั้งใจ**: แทนที่จะรับ message จนตัวเองตาย broker ดันแรงกดกลับไปที่ producer producer ที่ประพฤติดีจะสังเกตว่าถูก block (client มีสัญญาณ "connection blocked") แล้วชะลอตัว ส่วนตัวที่ประพฤติไม่ดีก็แค่กอง publish ที่ถูก block ไว้ ไม่ว่าทางไหน broker ก็รอด
+
+## per-connection flow control
+
+ก่อนจะถึง alarm ระดับ global ด้วยซ้ำ RabbitMQ ใช้ **internal flow control** ต่อ connection: ถ้า publisher ส่งเร็วกว่าที่ broker จะ route และ persist ได้ broker จะ throttle connection นั้นโดยเฉพาะเพื่อไม่ให้มันถล่ม pipeline ภายใน ใน management UI connection แบบนี้จะแสดงสถานะ **`flow`** — เป็นสัญญาณปกติที่บอกว่า publisher นี้กำลังถูกจังหวะ ไม่ใช่ error
+
+## lazy queue และ backlog ขนาดใหญ่
+
+โดย default classic queue พยายามเก็บ message ไว้ใน memory เพื่อความเร็ว queue ที่ลึกมาก (message เป็นล้าน) จึงกิน RAM เยอะและอาจ trip memory alarm **lazy queue** (และ storage แบบ classic-queue v2 ตัวใหม่) เก็บ message ไว้บน disk แทน แลก latency นิดหน่อยกับ memory footprint ที่เล็กลงมาก — เป็นตัวเลือกที่ถูกเมื่อ backlog โตได้ ส่วน quorum queue เก็บบน disk เสมอและรับมือ backlog ลึก ๆ ได้ดี
+
+## ออกแบบให้ alarm เกิดยาก
+
+alarm และ flow control เป็นตาข่ายกันตก ไม่ใช่โหมดการทำงานปกติ ถ้ามันทำงานสม่ำเสมอ แปลว่าออกแบบผิด เพื่อให้มันเกิดยาก:
+
+- **scale consumer** ให้ ack rate เท่ากับ publish rate ในระยะยาว
+- **bound queue** ด้วย `max-length` หรือ TTL เพื่อไม่ให้ producer ที่หลุดควบคุมโต queue ได้ไม่จำกัด (drop หรือ dead-letter ส่วนที่ล้นแทน)
+- **ใช้ lazy หรือ quorum queue** สำหรับงานที่ backlog โตลึกได้จริง
+- **จัดการ "connection blocked"** ใน producer — ถอยแทนที่จะกระหน่ำ
+- **alert เมื่อ queue depth ไต่ขึ้น** เพื่อ scale consumer *ก่อน* memory alarm จะทำงาน
+
+<Callout title="สรุปสั้น ๆ">
+เมื่อ producer วิ่งเร็วกว่า consumer, RabbitMQ ปกป้องตัวเอง: **memory/disk alarm block publisher** และ **per-connection flow control** จังหวะ publisher ที่เร็วเกินไป (สถานะ `flow`) **lazy/quorum queue** เก็บ backlog ลึก ๆ บน disk แทน RAM แต่ทั้งหมดนี้เป็นตาข่ายกันตก — ออกแบบให้มันเกิดยากด้วยการ scale consumer, **bound queue** ด้วย max-length/TTL และตอบสนองต่อ queue depth ที่ไต่ขึ้นก่อน alarm จะทำงาน
+</Callout>
+
+export const quizFlow = [
+  {
+    q: 'RabbitMQ ทำอะไรกับ publisher เมื่อ memory หรือ disk alarm ทำงาน?',
+    options: [
+      'เร่งให้เร็วขึ้น',
+      'block พวกมัน (หยุด publish) ขณะที่ consumer ยังไหล backlog ออกต่อ',
+      'ลบ message ของพวกมันทิ้ง',
+      'ตัด consumer ออกทั้งหมด',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'connection แสดงสถานะ "flow" ใน management UI หมายความว่าอะไร?',
+    options: [
+      'connection ล้มเหลว',
+      'per-connection flow control กำลังจังหวะ publisher ที่ส่งเร็วกว่าที่ broker รับไหว — เป็นสัญญาณปกติ',
+      'queue ว่าง',
+      'consumer crash',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'lazy queue (และ classic v2 / quorum storage) แก้ปัญหาอะไร?',
+    options: [
+      'serialization ช้า',
+      'backlog ลึกที่กิน RAM มากเกินไป — มันเก็บ message บน disk แทน',
+      'acknowledgement ที่หายไป',
+      'routing key ไม่ตรงกัน',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'วิธีที่ดีที่สุดในการทำให้ alarm และ flow control เกิดยากคืออะไร?',
+    options: [
+      'ปิด alarm ทิ้ง',
+      'scale consumer ให้เท่า publish rate และ bound queue ด้วย max-length/TTL เพื่อไม่ให้ backlog โตไม่จำกัด',
+      'publish ให้เร็วขึ้น',
+      'ใช้ queue ยักษ์ตัวเดียว',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="operations-and-scaling/flow-control-and-alarms" questions={quizFlow} />
+
+<ProgressTracker client:visible id="operations-and-scaling/flow-control-and-alarms" />

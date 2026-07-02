@@ -1,0 +1,79 @@
+---
+title: 'Patterns & Alternatives'
+description: 'รวม messaging pattern หลักไว้ในที่เดียว, RabbitMQ เทียบกับ Kafka, RabbitMQ Streams และการออกแบบ resilient consumer สำหรับ production'
+sidebar:
+  order: 1
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## จาก feature สู่การตัดสินใจ
+
+ตอนนี้คุณรู้จักกลไกทั้งหมดแล้ว — exchange, queue, acknowledgement, confirm, dead-letter exchange โมดูลสุดท้ายนี้ว่าด้วย **การตัดสินใจ**: pattern ไหนเหมาะกับปัญหาแบบไหน, เมื่อไรที่ RabbitMQ เป็นเครื่องมือที่ผิด และจะประกอบทุกอย่างที่เรียนมาให้เป็น consumer ที่เชื่อถือได้บน production ได้อย่างไร
+
+## โมดูลนี้ครอบคลุมอะไรบ้าง
+
+| บทเรียน | สิ่งที่คุณจะได้เรียน |
+|--------|-------------------|
+| Messaging patterns | work queue, pub/sub, routing, RPC และ event-driven choreography — และเมื่อไรควรใช้แต่ละแบบ |
+| RabbitMQ vs Kafka | queue semantics เทียบกับ log ที่ replay ได้ และจะเลือกอย่างไร |
+| RabbitMQ Streams | log แบบ append-only ที่ replay ได้ ซึ่ง build มาในตัว RabbitMQ |
+| Designing a resilient consumer | consumer ระดับ production ที่รวมทุกบทเรียนเรื่อง reliability เข้าด้วยกัน |
+
+## แผนที่ของสิ่งที่คุณสร้างมาถึงจุดนี้
+
+ทุก pattern ในคอร์สนี้คือรูปทรงที่ต่างกันของ flow แบบ publish-route-consume เดียวกัน:
+
+<Mermaid title="ทุก pattern คือรูปทรงของ flow เดียวกัน" code={mapDiagram} />
+
+export const mapDiagram = `flowchart TB
+  ev["event หรือ task หนึ่งตัว"] --> q1["Work queue\n(worker ตัวเดียวจากหลายตัวทำ)"]
+  ev --> q2["Pub/sub\n(subscriber ทุกตัวได้ copy)"]
+  ev --> q3["Routing/topic\n(เฉพาะ consumer ที่ match)"]
+  ev --> q4["RPC\n(ส่ง request แล้วรอ reply)"]`;
+
+ทักษะที่ต้องมีไม่ใช่การท่องจำแต่ละแบบ — แต่คือการมองออกว่า เมื่อมี requirement ใหม่เข้ามา มันคือรูปทรงไหน การมองออกแบบนี้คือสิ่งที่โมดูลที่เหลือจะสร้างให้
+
+<Callout title="การเปลี่ยนมุมมอง">
+บทเรียนช่วงแรกถามว่า "RabbitMQ ทำงานอย่างไร?" โมดูลนี้ถามว่า "ฉัน **ควร** ใช้ RabbitMQ ตรงนี้ไหม และถ้าใช้ ควรใช้ในรูปทรงไหน?" คุณค่าของ senior engineer อยู่ที่การรู้ว่าปัญหานี้ต้องการ work queue, ปัญหานั้นต้องการ log ที่ replay ได้ และอีกปัญหาไม่ควรแตะ broker เลยด้วยซ้ำ มากกว่าการต่อ exchange เป็น
+</Callout>
+
+export const quizIndex = [
+  {
+    q: 'โมดูลสุดท้ายนี้ว่าด้วยเรื่องอะไรเป็นหลัก?',
+    options: [
+      'สอน AMQP wire protocol ใหม่อีกครั้ง',
+      'การตัดสินใจ — pattern ไหนเหมาะกับปัญหาไหน และเมื่อไรที่ RabbitMQ เป็นเครื่องมือที่ผิด',
+      'การตั้งค่า TLS certificate',
+      'การเขียนตัว RabbitMQ server เอง',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'work queue, pub/sub, routing และ RPC มีอะไรที่เหมือนกัน?',
+    options: [
+      'ทั้งหมดคือรูปทรงที่ต่างกันของ flow แบบ publish-route-consume เดียวกัน',
+      'ทั้งหมดต้องใช้ Kafka',
+      'ทั้งหมดปิด acknowledgement',
+      'ใช้ได้ทีละแบบเท่านั้นในหนึ่งระบบ',
+    ],
+    answer: 0,
+  },
+  {
+    q: 'senior engineer เพิ่มคุณค่าได้มากที่สุดตรงไหนในงาน messaging?',
+    options: [
+      'พิมพ์ code declare exchange ได้เร็วที่สุด',
+      'มองออกว่า requirement ใหม่ต้องการ pattern (หรือ alternative) ตัวไหนจริง ๆ',
+      'ท่องจำทุก method ของ client library',
+      'หลีกเลี่ยงการวาด diagram',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="patterns-and-alternatives/index" questions={quizIndex} />
+
+<ProgressTracker client:visible id="patterns-and-alternatives/index" />

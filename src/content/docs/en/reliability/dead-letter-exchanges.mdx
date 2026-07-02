@@ -1,0 +1,152 @@
+---
+title: 'Dead-Letter Exchanges'
+description: 'Where messages go when they can''t be processed — dead-lettering triggers, configuring a DLX, handling poison messages, and the TTL+DLX delayed-retry pattern.'
+sidebar:
+  order: 3
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## The problem: a message you can't process
+
+A consumer pulls a message, tries to process it, and fails — the payload is malformed, a downstream service is down, or the record it references doesn't exist. What now?
+
+If you **nack it with requeue**, RabbitMQ puts it right back at the front of the queue, you pick it up again immediately, it fails again, and you have a **poison message** spinning in a tight loop, burning CPU and blocking everything behind it. If you just **drop** it, you've silently lost data. Neither is acceptable.
+
+The answer is to send the failed message somewhere else on purpose. That "somewhere else" is a **dead-letter exchange (DLX)**.
+
+## What dead-letters a message
+
+A message is dead-lettered — routed to the queue's configured DLX — when any of these happen:
+
+- It is **rejected or nacked with `requeue=false`** (your consumer says "don't give this back to me").
+- Its **message TTL expires** while sitting in the queue.
+- The queue hits its **max-length** limit and the message is dropped to make room (overflow).
+
+You attach a DLX to a queue with the `x-dead-letter-exchange` argument (and optionally `x-dead-letter-routing-key` to relabel it on the way out).
+
+<Mermaid title="A failed message flows to the dead-letter queue" code={dlxDiagram} />
+
+export const dlxDiagram = `flowchart LR
+  q["work queue\n(x-dead-letter-exchange: dlx)"] -->|"nack requeue=false\nor TTL expiry\nor overflow"| dlx["DLX (exchange)"]
+  dlx --> dlq["dead-letter queue"]
+  dlq --> ops["ops / inspector\n/ retry logic"]`;
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    await channel.assertExchange('dlx', 'fanout', { durable: true });
+    await channel.assertQueue('orders.dead', { durable: true });
+    await channel.bindQueue('orders.dead', 'dlx', '');
+
+    // the work queue dead-letters to the DLX
+    await channel.assertQueue('orders', {
+      durable: true,
+      arguments: { 'x-dead-letter-exchange': 'dlx' },
+    });
+
+    // in the consumer, reject a bad message WITHOUT requeue → it dead-letters
+    channel.nack(msg, false, false);
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    channel.exchange_declare("dlx", exchange_type="fanout", durable=True)
+    channel.queue_declare("orders.dead", durable=True)
+    channel.queue_bind("orders.dead", "dlx")
+
+    # the work queue dead-letters to the DLX
+    channel.queue_declare("orders", durable=True,
+                          arguments={"x-dead-letter-exchange": "dlx"})
+
+    # reject a bad message WITHOUT requeue → it dead-letters
+    channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    ch.ExchangeDeclare("dlx", "fanout", true, false, false, false, nil)
+    ch.QueueDeclare("orders.dead", true, false, false, false, nil)
+    ch.QueueBind("orders.dead", "", "dlx", false, nil)
+
+    // the work queue dead-letters to the DLX
+    ch.QueueDeclare("orders", true, false, false, false, false, amqp.Table{
+        "x-dead-letter-exchange": "dlx",
+    })
+
+    // reject a bad message WITHOUT requeue → it dead-letters
+    d.Nack(false, false)
+    ```
+  </TabItem>
+</Tabs>
+
+## Poison messages: give up gracefully
+
+Not everything should be retried forever. A message that will *never* succeed — bad schema, a reference that no longer exists — is a **poison message**. The pattern is: track how many times a message has been tried (a counter in a header, or the `x-death` records RabbitMQ adds on each dead-letter), and after N attempts, route it to a **parking** (or "dead") queue where a human or an alert can look at it. Never let a poison message loop.
+
+## TTL + DLX = delayed retry
+
+Here is the clever trick that dead-lettering unlocks. Sometimes a failure is *transient* — a downstream service is briefly down — and you want to retry, but **not immediately**. You want to wait 30 seconds and try again.
+
+Combine a **message/queue TTL** with a **DLX**:
+
+1. On failure, publish the message to a **retry queue** that has a TTL of 30s and whose DLX points back at the main exchange.
+2. The message sits in the retry queue doing nothing for 30 seconds.
+3. When the TTL expires, RabbitMQ dead-letters it — which routes it **back to the main queue** for another attempt.
+
+You've built a delayed retry with backoff using nothing but queue configuration — no scheduler, no `sleep` in your consumer. (The Consumer Patterns module builds this into a full retry ladder.)
+
+<Callout title="The one-line takeaway">
+A **dead-letter exchange** is where messages go when they're rejected without requeue, expire via TTL, or overflow a full queue — instead of looping as poison or vanishing. Route failures to a dead-letter queue for inspection, cap retries with a counter before parking a poison message, and combine **TTL + DLX** to build delayed retry with zero extra infrastructure.
+</Callout>
+
+export const quizDlx = [
+  {
+    q: 'Why is nacking a failed message with requeue=true dangerous?',
+    options: [
+      'It deletes the queue',
+      'It re-delivers the message immediately, creating a tight poison-message loop that fails over and over',
+      'It disables acknowledgements',
+      'It sends the message to every consumer at once',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'Which of these does NOT dead-letter a message?',
+    options: [
+      'Rejecting/nacking it with requeue=false',
+      'Its message TTL expiring in the queue',
+      'The queue overflowing its max-length',
+      'Successfully acknowledging it',
+    ],
+    answer: 3,
+  },
+  {
+    q: 'How do you handle a poison message that will never succeed?',
+    options: [
+      'Requeue it forever',
+      'Track attempts and, after N tries, route it to a parking/dead queue for a human or alert',
+      'Delete the whole queue',
+      'Disable the DLX',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'How does TTL + DLX create a delayed retry?',
+    options: [
+      'The consumer sleeps for the TTL duration',
+      'The message waits in a retry queue until its TTL expires, then dead-letters back to the main queue',
+      'RabbitMQ runs a cron job',
+      'The publisher schedules a future publish',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="reliability/dead-letter-exchanges" questions={quizDlx} />
+
+<ProgressTracker client:visible id="reliability/dead-letter-exchanges" />

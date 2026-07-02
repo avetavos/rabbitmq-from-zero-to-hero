@@ -1,0 +1,136 @@
+---
+title: 'Queue Properties'
+description: 'durable, exclusive, auto-delete และ x-* arguments — flag ที่ set ตอน declare queue ซึ่งกำหนด lifecycle และพฤติกรรมของมัน'
+sidebar:
+  order: 2
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## การ declare queue คือการตัดสินใจ
+
+ทุกครั้งที่ declare queue คุณส่ง flag เข้าไปไม่กี่ตัว มันดูเหมือน boilerplate แต่แต่ละตัวเปลี่ยนว่า queue จะอยู่ได้นานแค่ไหนและใครใช้มันได้บ้าง ตั้งผิดแล้ว queue ของคุณอาจหายไปตอนที่ไม่คาดคิด หรือค้างอยู่ตลอดกาลตอนที่อยากให้มันหายไป
+
+มี boolean flag สามตัวและถุงใส่ argument เพิ่มเติมอีกหนึ่งถุง
+
+## `durable` — รอดจากการ restart broker
+
+**durable** queue ถูกเขียนลง disk ดังนั้น *definition* ของมันรอดจากการ restart RabbitMQ ส่วน queue ที่ไม่ durable (transient) จะถูกลืมเมื่อ broker restart
+
+flag นี้คนเข้าใจผิดบ่อยที่สุด จึงต้องพูดให้ชัด: `durable` รักษา **ตัว queue** ไว้ ไม่ใช่ message ในนั้น ถ้าอยากให้ message รอดด้วย มันต้องถูก publish แบบ **persistent** (บทเรียนถัดไป) durable queue + persistent message คือคู่ที่ทำให้ "รอดจาก restart" — ขาดตัวใดตัวหนึ่งก็ยังเสียข้อมูลอยู่ดี
+
+queue ไหนที่สำคัญ ให้ตั้ง `durable: true`
+
+## `exclusive` — connection เดียวเท่านั้น แล้วก็หายไป
+
+**exclusive** queue ใช้ได้เฉพาะ connection ที่ declare มันเท่านั้น และ **ถูกลบอัตโนมัติเมื่อ connection นั้นปิด** เหมาะสำหรับ reply queue ส่วนตัวชั่วคราว (คุณจะเห็นในบทเรียน RPC) และไม่เหมาะกับอะไรที่ต้องใช้ร่วมกัน
+
+## `auto-delete` — หายไปเมื่อ consumer ตัวสุดท้ายจากไป
+
+**auto-delete** queue ถูกลบเมื่อ **consumer ตัวสุดท้าย unsubscribe** (ต้องเคยมี consumer อย่างน้อยหนึ่งตัว) มีประโยชน์สำหรับ subscription ชั่วคราวที่ queue ไม่มีเหตุผลจะอยู่ต่อหลัง subscriber จากไป
+
+## declare durable queue
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    // durable: true → the queue definition survives a broker restart
+    await channel.assertQueue('orders', {
+      durable: true,
+      exclusive: false,
+      autoDelete: false,
+    });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    # durable=True → the queue definition survives a broker restart
+    channel.queue_declare(
+        queue="orders",
+        durable=True,
+        exclusive=False,
+        auto_delete=False,
+    )
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    // args: name, durable, autoDelete, exclusive, noWait, table
+    q, err := ch.QueueDeclare(
+        "orders", // name
+        true,     // durable
+        false,    // auto-delete
+        false,    // exclusive
+        false,    // no-wait
+        nil,      // arguments
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+## `x-*` arguments — ทุกอย่างที่เหลือ
+
+นอกจาก boolean สามตัว queue ยังรับ **arguments** table (มักเรียกว่า `x-arguments` เพราะ key ขึ้นต้นด้วย `x-`) ซึ่งปลดล็อกพฤติกรรมขั้นสูงที่จะครอบคลุมในคอร์สนี้ต่อไป:
+
+| Argument | ทำอะไร |
+|----------|--------------|
+| `x-message-ttl` | message expire หลังจาก N มิลลิวินาที |
+| `x-expires` | ตัว queue เองถูกลบหลังจากไม่ถูกใช้ N ms |
+| `x-max-length` | จำกัดจำนวน message; overflow ถูก drop หรือ reject |
+| `x-dead-letter-exchange` | ที่ที่ message ซึ่ง expire/reject ถูกส่งไป (บทเรียน DLX) |
+| `x-queue-type` | `classic` หรือ `quorum` (บทเรียน clustering) |
+
+<Callout title="สรุปหนึ่งบรรทัด">
+การ declare queue คือการตั้ง lifecycle ของมัน: `durable` รักษา definition ของ queue ข้ามการ restart (แต่ไม่รวม message — พวกนั้นต้อง persistent ด้วย), `exclusive` ผูก queue กับ connection เดียวและลบมันเมื่อ disconnect และ `auto-delete` ลบมันเมื่อ consumer ตัวสุดท้ายจากไป ส่วนของขั้นสูงทั้งหมด — TTL, length limit, dead-lettering, quorum queue — ตั้งค่าผ่าน `x-*` arguments table
+</Callout>
+
+export const quizProps = [
+  {
+    q: 'durable queue รักษาอะไรไว้ข้ามการ restart broker กันแน่?',
+    options: [
+      'queue definition และ message ทั้งหมด แบบอัตโนมัติ',
+      'queue definition — แต่ message รอดก็ต่อเมื่อถูก publish แบบ persistent',
+      'ไม่รักษาอะไรเลย; durable มีผลแค่ performance',
+      'แค่ consumer subscription เท่านั้น',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'exclusive queue ถูกลบเมื่อไร?',
+    options: [
+      'หลังจาก 30 วินาที',
+      'เมื่อ connection ที่ declare มันปิดลง',
+      'เมื่อ broker restart',
+      'ไม่มีวันถูกลบ — exclusive queue อยู่ถาวร',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'auto-delete queue ถูกลบเมื่อ:',
+    options: [
+      'consumer ตัวสุดท้าย unsubscribe',
+      'มันได้รับ message ตัวแรก',
+      'producer disconnect',
+      'message ถูก acknowledge',
+    ],
+    answer: 0,
+  },
+  {
+    q: 'คุณตั้งค่าอย่าง message TTL, max length และ dead-lettering ที่ไหน?',
+    options: [
+      'เป็น boolean flag คู่กับ durable',
+      'ใน x-* arguments table ของ queue',
+      'บน connection string',
+      'ตั้งค่าต่อ queue ไม่ได้',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="queues-and-messages/queue-properties" questions={quizProps} />
+
+<ProgressTracker client:visible id="queues-and-messages/queue-properties" />

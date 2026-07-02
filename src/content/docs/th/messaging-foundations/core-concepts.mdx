@@ -1,0 +1,118 @@
+---
+title: 'Core Concepts'
+description: 'connection เทียบกับ channel, exchange, queue, binding, routing key และการเดินทางของ message หนึ่งตัวจาก producer ไป consumer'
+sidebar:
+  order: 4
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## connection และ channel
+
+client คุยกับ RabbitMQ ผ่าน **TCP connection** เส้นเดียวที่อายุยาว แต่การเปิด TCP connection มีต้นทุนสูง และแอปที่ยุ่ง ๆ ต้องทำหลายอย่างพร้อมกัน — publish จากที่หนึ่ง, consume ที่อีกที่ และมีหลาย thread ทำงานขนานกัน
+
+คำตอบคือ **channel** channel คือ virtual connection น้ำหนักเบาที่ *multiplex อยู่บน* TCP connection เดียว คุณเปิด **หนึ่ง connection ต่อหนึ่ง process** และ **หลาย channel บนนั้น** — โดยทั่วไปคือหนึ่ง channel ต่อ thread หรือต่อ task ที่ทำงานขนานกัน
+
+<Mermaid title="หนึ่ง connection หลาย channel" code={channelDiagram} />
+
+export const channelDiagram = `flowchart LR
+  app["Application"] --> conn["1 TCP Connection"]
+  conn --> ch1["Channel 1\n(publisher)"]
+  conn --> ch2["Channel 2\n(consumer)"]
+  conn --> ch3["Channel 3\n(consumer)"]
+  ch1 --> broker["RabbitMQ"]
+  ch2 --> broker
+  ch3 --> broker`;
+
+หลักจำง่าย ๆ: **connection อายุยาวและมีน้อย; channel ถูกและมีเยอะ** ความผิดพลาดที่พบบ่อยคือการเปิด connection ต่อทุก operation — นั่นทำให้ broker หมดแรง อีกอันคือการแชร์ channel เดียวข้ามหลาย thread — channel ไม่ thread-safe หนึ่ง connection ต่อแอป, หนึ่ง channel ต่อ worker
+
+## exchange, queue และ binding
+
+คุณเจอพวกนี้ในบทที่แล้ว นี่คือเวอร์ชันที่แม่นยำขึ้น:
+
+- **exchange** รับทุก message ที่ publish เข้ามา แล้วใช้ type และ binding ของมันตัดสินใจว่า queue ไหนได้ message มันไม่เก็บอะไรไว้เลย
+- **queue** คือ buffer ที่เรียงลำดับ ซึ่ง *เก็บ* message ไว้จนกว่า consumer จะมารับ นี่คือสิ่งเดียวที่เก็บ message
+- **binding** เชื่อม exchange เข้ากับ queue มันอาจมี **binding key** ที่เมื่อรวมกับ **routing key** ของ message จะเป็นตัวกำหนดว่า message ตรงเงื่อนไขไหม
+
+routing key ก็แค่ label ที่เป็น string ที่ producer ติดไว้บนแต่ละ message (เช่น `order.created` หรือ `payment.failed`) จะสำคัญไหมขึ้นกับ type ของ exchange — fanout exchange ไม่สนใจมันเลย ส่วน topic exchange pattern-match บนมัน นั่นคือทั้งโมดูล Exchanges & Routing
+
+## การเดินทางของ message หนึ่งตัว
+
+รวมทุกอย่างเข้าด้วยกันแล้วไล่ตาม message ตัวเดียวจากต้นจนจบ:
+
+<Mermaid title="message จาก publish ถึง acknowledgement" code={journeyDiagram} />
+
+export const journeyDiagram = `sequenceDiagram
+  participant P as Producer
+  participant X as Exchange
+  participant Q as Queue
+  participant C as Consumer
+  P->>X: publish(routing key, body)
+  X->>Q: route ตาม binding
+  Note over Q: message รออยู่ตรงนี้
+  Q->>C: deliver
+  C->>C: process
+  C->>Q: ack (เสร็จแล้ว)
+  Note over Q: message ถูกลบ`;
+
+1. producer **publish** message พร้อม routing key ไปที่ exchange
+2. exchange **route** ไปยัง queue ที่ตรงเงื่อนไข (ศูนย์, หนึ่ง หรือหลาย queue)
+3. message **รอ** ใน queue จนกว่าจะมี consumer พร้อม
+4. queue **deliver** ให้ consumer
+5. consumer process แล้วส่ง **acknowledgement** — จากนั้น queue ถึงจะลบมัน
+
+step สุดท้ายคือตาข่ายกันตก: จนกว่า consumer จะ ack RabbitMQ ถือว่างานยังไม่เสร็จ ถ้า consumer crash กลางคัน message ที่ยังไม่ ack จะถูก redeliver (มีบทเรียนทั้งบทเรื่อง acknowledgement — มันคือวิธีที่ "at-least-once" delivery ทำงาน)
+
+<Callout title="The one-line takeaway">
+เปิด **หนึ่ง connection ต่อ process** และ **หลาย channel ที่ถูก ๆ** บนมัน (channel ไม่ thread-safe — หนึ่ง channel ต่อ worker) ชีวิตของ message คือ: producer publish เข้า **exchange** → route ตาม **binding** ไป **queue** → deliver ให้ **consumer** → ถูกลบก็ต่อเมื่อ consumer **acknowledge** เท่านั้น มีแค่ queue ที่เก็บ message; exchange แค่ route
+</Callout>
+
+export const quizConcepts = [
+  {
+    q: 'channel ใน RabbitMQ คืออะไร?',
+    options: [
+      'TCP connection แยกต่างหากสำหรับแต่ละ message',
+      'virtual connection น้ำหนักเบาที่ multiplex อยู่บน TCP connection เดียว',
+      'exchange ชนิดหนึ่ง',
+      'protocol การ acknowledgement',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'การใช้ connection/channel ที่แนะนำคืออะไร?',
+    options: [
+      'หนึ่ง connection ต่อ operation, แชร์ channel เดียวข้ามทุก thread',
+      'หนึ่ง connection อายุยาวต่อ process พร้อมหลาย channel — โดยทั่วไปหนึ่งต่อ worker',
+      'connection และ channel ใหม่สำหรับทุก message ที่ publish',
+      'หนึ่ง channel แชร์ทุก thread เพราะ channel thread-safe',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'component ตัวไหนที่เก็บ message จริง ๆ?',
+    options: [
+      'exchange',
+      'binding',
+      'queue',
+      'channel',
+    ],
+    answer: 2,
+  },
+  {
+    q: 'message ถูกลบออกจาก queue เมื่อไร?',
+    options: [
+      'ทันทีที่ deliver ให้ consumer',
+      'หลังจาก consumer acknowledge มัน',
+      'เมื่อ producer publish message ตัวถัดไป',
+      'หลัง timer 30 วินาทีคงที่',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="messaging-foundations/core-concepts" questions={quizConcepts} />
+
+<ProgressTracker client:visible id="messaging-foundations/core-concepts" />

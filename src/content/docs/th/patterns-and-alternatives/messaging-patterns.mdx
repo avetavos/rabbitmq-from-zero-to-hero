@@ -1,0 +1,106 @@
+---
+title: 'Messaging Patterns'
+description: 'รวม pattern หลักไว้ด้วยกัน — work queue, publish/subscribe, routing, RPC และ event-driven choreography — พร้อมแนวทางเลือกใช้แต่ละแบบ'
+sidebar:
+  order: 2
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ห้ารูปทรง broker เดียว
+
+ตลอดคอร์สนี้คุณได้เจอ building block มาแล้ว ต่อไปนี้คือ pattern ที่มีชื่อเรียก ซึ่งคุณหยิบมาใช้ได้ทันที โดยแต่ละอันจับคู่กับ exchange type ที่ใช้ implement มัน
+
+### Work queue (competing consumers)
+
+queue เดียว worker หลายตัว แต่ละ message ไปหา worker แค่ **ตัวเดียว** และ broker กระจาย load ให้เอง นี่คือ pattern สำหรับ **กระจาย task** — resize รูปนี้, ส่ง email นี้, process payment นี้ — ที่คุณเพิ่ม throughput ด้วยการเพิ่ม worker
+
+### Publish/subscribe
+
+event เดียว subscriber **อิสระ** หลายตัว แต่ละตัวมี queue ของตัวเองผ่าน fanout exchange subscriber ทุกตัวได้ **copy ของตัวเอง** ใช้ตอนต้องการ broadcast event ไปยังระบบที่ต้องตอบสนองแต่ละตัว — email, analytics, cache invalidation — โดยไม่มีตัวไหนต้องรู้จักตัวอื่น
+
+### Routing / topics
+
+การ deliver แบบเลือก direct หรือ topic exchange ส่ง message ไปเฉพาะ queue ที่ binding match กับ routing key ใช้ตอน consumer ต่างกันสนใจ event **คนละ subset** — `order.*.created` ที่นี่, `payment.failed.#` ที่นั่น
+
+### RPC (request/reply)
+
+การสร้าง synchronous call-and-wait ขึ้นมาบน messaging โดยใช้ `correlation_id` และ `reply_to` มีประโยชน์เป็นครั้งคราว แต่ส่วนใหญ่มันเป็นสัญญาณว่าจริง ๆ คุณอยากได้ RPC/HTTP call ตรง ๆ มากกว่า — ใช้ให้น้อย
+
+### Event-driven choreography
+
+pattern เชิงสถาปัตยกรรมที่อยู่เหนือตัวอื่น: service ปล่อย **event** ("OrderPlaced") แล้ว service อื่น **ตอบสนอง** โดยไม่มี orchestrator กลางคอยสั่งว่าต้องทำอะไร RabbitMQ คือระบบประสาทที่ส่ง event เหล่านั้น
+
+<Mermaid title="Choreography — event เดียว การตอบสนองอิสระหลายตัว" code={choreoDiagram} />
+
+export const choreoDiagram = `flowchart LR
+  order["Order service"] -->|"OrderPlaced"| x["events exchange"]
+  x --> q1["payment queue"] --> s1["Payment service"]
+  x --> q2["inventory queue"] --> s2["Inventory service"]
+  x --> q3["email queue"] --> s3["Notification service"]`;
+
+หมายเหตุเรื่อง **saga**: เมื่อ business process ครอบคลุมหลาย service (place order → charge → reserve stock → ship) choreography ร้อยมันเข้าด้วยกันเป็น chain ของ event และแต่ละ step publish step ถัดไป ถ้า step ไหนล้มเหลว compensating event จะ undo step ก่อนหน้า RabbitMQ ส่ง event; ส่วน logic ของ saga อยู่ใน service ของคุณ
+
+## การเลือก pattern
+
+| คุณต้องการจะ… | Pattern | Exchange type |
+|--------------|---------|---------------|
+| กระจาย task ไปยัง worker | Work queue | direct / default |
+| broadcast event ไปยังทุกตัวที่ตอบสนอง | Publish/subscribe | fanout |
+| deliver เฉพาะ consumer ที่สนใจ | Routing | direct / topic |
+| ได้ reply กลับจาก request | RPC | direct (+ reply queue) |
+| ให้ service ตอบสนอง event โดยไม่มี orchestrator | Choreography | topic / fanout |
+
+<Callout title="สรุปหนึ่งบรรทัด">
+เรียนรู้ pattern ตามชื่อ: **work queue** กระจาย task ไปยัง worker ที่แข่งกันทำ, **pub/sub** ให้ subscriber ทุกตัวได้ copy ของตัวเอง, **routing/topics** deliver แบบเลือก, **RPC** จำลอง request/reply และ **choreography** ให้ service ตอบสนอง event โดยไม่มี orchestrator กลาง เลือก pattern ก่อน แล้ว exchange type จะตามมาเอง
+</Callout>
+
+export const quizPatterns = [
+  {
+    q: 'ใน work queue มี worker กี่ตัวที่ process แต่ละ message?',
+    options: [
+      'worker ทุกตัวได้ copy',
+      'ตัวเดียวเท่านั้น — broker กระจาย load ให้',
+      'ไม่มีเลยจนกว่า producer จะ ack',
+      'สุ่มมาครึ่งหนึ่งของ worker',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'อะไรที่ทำให้ publish/subscribe ต่างจาก work queue?',
+    options: [
+      'pub/sub ให้ subscriber ทุกตัวได้ copy ของตัวเอง; work queue ให้แต่ละ message ไปหา worker ตัวเดียว',
+      'pub/sub ทำงานได้กับ Kafka เท่านั้น',
+      'work queue ใช้ acknowledgement ไม่ได้',
+      'มันคือ pattern เดียวกันแค่ชื่อต่างกัน',
+    ],
+    answer: 0,
+  },
+  {
+    q: 'event-driven choreography คืออะไร?',
+    options: [
+      'orchestrator กลางสั่งแต่ละ service ทีละตัว',
+      'service ปล่อย event แล้วตัวอื่นตอบสนอง โดยไม่มี controller กลาง',
+      'วิธี compress message',
+      'ตัวแทนของ acknowledgement',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'pattern ไหนที่ควรทำให้คุณหยุดคิดว่า "จริง ๆ ฉันอยากได้ RPC/HTTP call ปกติหรือเปล่า?"',
+    options: [
+      'Work queue',
+      'Publish/subscribe',
+      'RPC over RabbitMQ',
+      'Routing',
+    ],
+    answer: 2,
+  },
+];
+
+<Quiz client:visible id="patterns-and-alternatives/messaging-patterns" questions={quizPatterns} />
+
+<ProgressTracker client:visible id="patterns-and-alternatives/messaging-patterns" />

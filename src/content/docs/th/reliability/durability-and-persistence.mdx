@@ -1,0 +1,134 @@
+---
+title: 'Durability & Persistence'
+description: 'อะไรรอด broker restart จริง ๆ — durable queue และ persistent message, ทำไมต้องมีทั้งคู่, trade-off ของ fsync และ quorum queue เปลี่ยนเรื่องนี้อย่างไร'
+sidebar:
+  order: 5
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## บททดสอบ restart
+
+ทุกอย่างที่ผ่านมาสมมติว่า broker ยังรันอยู่ แต่ broker restart ได้ — deploy, crash, kernel update คำถามที่แยก setup เล่น ๆ ออกจาก production คือ: **เมื่อ RabbitMQ restart อะไรยังอยู่?**
+
+โดย default น้อยจนน่าผิดหวัง queue กับ message ของมันอยู่ใน memory และ restart จะล้างทิ้งเว้นแต่คุณขอ durability ไว้ — และนี่คือกับดักที่เกือบทุกคนพลาด: มันต้องใช้ setting **สอง** ตัวที่เป็นอิสระต่อกัน และถ้ามีตัวเดียวโดยขาดอีกตัวก็ยังทำข้อมูลหาย
+
+## สอง setting ต้องมีทั้งคู่
+
+การรอด restart ต้องเป็นจริงทั้งสองข้อ:
+
+1. **queue เป็น durable** *นิยาม* ของ durable queue ถูกเขียนลง disk ดังนั้น queue ยังอยู่หลัง restart ตั้ง `durable: true` ตอน declare
+2. **message เป็น persistent** *body* ของ persistent message ถูกเขียนลง disk ตั้ง `delivery_mode = 2` (persistent) ตอน publish
+
+ขาดข้อใดข้อหนึ่งก็เสียข้อมูลตอน restart:
+
+<Mermaid title="เฉพาะ durable queue + persistent message เท่านั้นที่รอด restart" code={survivalDiagram} />
+
+export const survivalDiagram = `flowchart TB
+  a["durable queue +\npersistent message"] -->|restart| a2["survives"]
+  b["durable queue +\ntransient message"] -->|restart| b2["queue stays,\nMESSAGES LOST"]
+  c["non-durable queue +\npersistent message"] -->|restart| c2["QUEUE GONE\n(messages with it)"]
+  d["non-durable +\ntransient"] -->|restart| d2["all lost"]`;
+
+incident production คลาสสิก: ทีม declare durable queue รู้สึกปลอดภัย แล้วลืม publish message แบบ persistent queue รอดทุก restart อย่างซื่อสัตย์ — **แบบว่าง ๆ** เพราะ message ข้างในเป็น transient durable queue, transient message: queue อยู่ ข้อมูลตาย
+
+<Tabs syncKey="lang">
+  <TabItem label="Node">
+    ```js
+    // 1) durable queue — survives restart
+    await channel.assertQueue('orders', { durable: true });
+
+    // 2) persistent message — body written to disk
+    channel.sendToQueue('orders', Buffer.from(body), { persistent: true });
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    # 1) durable queue
+    channel.queue_declare(queue="orders", durable=True)
+
+    # 2) persistent message (delivery_mode=2)
+    channel.basic_publish(
+        exchange="", routing_key="orders", body=body,
+        properties=pika.BasicProperties(delivery_mode=2),
+    )
+    ```
+  </TabItem>
+  <TabItem label="Go">
+    ```go
+    // 1) durable queue
+    ch.QueueDeclare("orders", true, false, false, false, nil)
+
+    // 2) persistent message
+    ch.PublishWithContext(ctx, "", "orders", false, false, amqp.Publishing{
+        DeliveryMode: amqp.Persistent, // = 2
+        Body:         body,
+    })
+    ```
+  </TabItem>
+</Tabs>
+
+## Trade-off: durability แลกมาด้วย latency
+
+การเขียนลง disk ช้ากว่าอยู่ใน memory ดังนั้น persistence มีต้นทุน แต่สังเกตจุดละเอียดสำคัญ: การ mark message เป็น persistent **ไม่** การันตีว่ามันอยู่บน disk ทันทีที่คุณ publish — RabbitMQ อาจ batch การเขียน เพื่อให้แน่ใจว่า message ถูกเก็บอย่างปลอดภัยก่อนคุณถือว่าส่งแล้ว ให้จับคู่ persistence กับ **publisher confirm** (บทเรียนก่อนหน้า): confirm จะมาถึงก็ต่อเมื่อ message ถูก persist อย่างปลอดภัยแล้วเท่านั้น
+
+ภาพที่ซื่อสัตย์: **durable queue + persistent message + publisher confirm** คือคอมโบที่ปลอดภัยเต็มที่ และมันแลก throughput กับ latency บางส่วนเพื่อไม่ทำข้อมูลหายตอน restart สำหรับ stream ที่ volume สูงและทนการหายได้ (metrics, log) คุณอาจจงใจข้าม persistence เพื่อความเร็ว — เป็นทางเลือกที่ถูกต้อง ตัดสินใจอย่างรู้ตัว
+
+## หมายเหตุเรื่อง quorum queue
+
+durable queue แบบ classic รอด restart ของ *หนึ่ง* node — แต่ classic queue อยู่บน node เดียวทั้งหมด ดังนั้นถ้า disk ของ node นั้นพัง queue ก็ตายไปด้วย **Quorum queue** ยกระดับขึ้น: มัน replicate queue ข้ามหลาย node ด้วย Raft consensus algorithm ดังนั้นข้อมูลรอดแม้เสีย node ทั้งตัว ไม่ใช่แค่ restart มันเป็น default สมัยใหม่สำหรับอะไรก็ตามที่ห้ามหาย — และโมดูล Operations & Scaling จะลงลึกเรื่องนี้
+
+<Callout title="สรุปหนึ่งบรรทัด">
+การรอด broker restart ต้องมี **ทั้ง** durable queue (เพื่อให้นิยาม queue อยู่ต่อ) **และ** persistent message (เพื่อให้ body อยู่ต่อ) — มีตัวเดียวโดยขาดอีกตัวก็ยังเสียข้อมูล และกับดักคลาสสิกคือ durable queue ที่เต็มไปด้วย transient message ที่กลับมาว่างเปล่า จับคู่กับ **publisher confirm** เพื่อรู้ว่า message อยู่บน disk จริง และหยิบ **quorum queue** มาใช้เมื่อต้องรอดจากการเสีย node ทั้งตัว ไม่ใช่แค่ restart
+</Callout>
+
+export const quizDurability = [
+  {
+    q: 'setting สองตัวใดที่ต้องมี *ทั้งคู่* เพื่อให้ message รอด broker restart?',
+    options: [
+      'durable exchange กับ bound queue',
+      'durable queue และ persistent message',
+      'publisher confirm กับ mandatory flag',
+      'auto-ack กับ prefetch',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'คุณ declare durable queue แต่ publish transient message แล้ว broker restart เกิดอะไรขึ้น?',
+    options: [
+      'ทุกอย่างรอด',
+      'queue รอดแต่กลับมาว่างเปล่า — message หายไป',
+      'queue ถูกลบ',
+      'message รอดแต่ queue หายไป',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'ทำไมต้องจับคู่ persistence กับ publisher confirm?',
+    options: [
+      'confirm ทำให้ message เล็กลง',
+      'persistent message อาจยังไม่อยู่บน disk ทันที; confirm มาถึงก็ต่อเมื่อมันถูก persist อย่างปลอดภัยแล้ว',
+      'confirm แทนที่ความจำเป็นของ durable queue',
+      'มันปิดการเขียน disk',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'quorum queue เพิ่มอะไรจาก classic durable queue?',
+    options: [
+      'throughput ใน memory ที่เร็วขึ้นเท่านั้น',
+      'replication ข้ามหลาย node (ด้วย Raft) รอดจากการเสีย node ทั้งตัว ไม่ใช่แค่ restart',
+      'การ compress message อัตโนมัติ',
+      'มันเอาความจำเป็นในการ ack ออก',
+    ],
+    answer: 1,
+  },
+];
+
+<Quiz client:visible id="reliability/durability-and-persistence" questions={quizDurability} />
+
+<ProgressTracker client:visible id="reliability/durability-and-persistence" />

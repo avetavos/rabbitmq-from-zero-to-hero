@@ -1,0 +1,120 @@
+---
+title: 'What Is a Message Queue?'
+description: 'ปัญหาที่ asynchronous messaging แก้ — decouple service, รองรับ spike ของ load และทนต่อ failure — และเมื่อไรที่ queue คือเครื่องมือที่ถูกต้อง'
+sidebar:
+  order: 2
+---
+
+import Mermaid from '../../../../components/Mermaid.astro';
+import Callout from '../../../../components/Callout.astro';
+import Quiz from '../../../../components/Quiz.tsx';
+import ProgressTracker from '../../../../components/ProgressTracker.tsx';
+
+## ปัญหาของการเรียก service ตรง ๆ
+
+ลองนึกถึง order service ที่เมื่อมีคนสั่งของ ต้องทำหลายอย่าง: ตัดบัตร, ส่งอีเมลยืนยัน, อัปเดต inventory และแจ้ง warehouse วิธีที่ชัดเจนที่สุดคือเรียกแต่ละ service ตรง ๆ แล้วรอให้เสร็จทีละตัว
+
+วิธีนี้ใช้ได้ — จนกว่ามันจะพัง:
+
+- **email service ช้า** ตอนนี้การสั่งของก็ช้าตาม เพราะคุณ block รออีเมลอยู่
+- **warehouse service ล่ม** ตอนนี้ทั้ง order พังหมด — ทั้งที่ payment สำเร็จไปแล้ว
+- **มี flash sale** หนึ่งหมื่น order ต่อวินาทีถล่มทุก downstream service พร้อมกัน แล้วตัวที่ช้าที่สุดก็ล้ม
+
+ต้นตอของปัญหา: **การเรียกตรง ๆ ผูกชะตาของ caller ไว้กับ callee** ถ้า callee ช้า คุณก็ช้า ถ้ามันล่ม คุณก็ fail ถ้าคุณโดน spike มันก็โดน spike ตาม
+
+## queue เปลี่ยนอะไร
+
+message queue วาง buffer ไว้ตรงกลาง order service แค่ **publish** message ("order 123 placed") แล้ว return ทันที ส่วนแต่ละ downstream service ก็ **consume** message เหล่านั้นตามจังหวะของตัวเอง
+
+<Mermaid title="เรียกตรง ๆ ที่ผูกชะตากัน เทียบกับ queue ที่ทำหน้าที่ buffer" code={couplingDiagram} />
+
+export const couplingDiagram = `flowchart TB
+  subgraph direct["เรียกตรง ๆ — ชะตาผูกกัน"]
+    o1["order service"] -->|block| e1["email (ช้า)"]
+    o1 -->|fail ถ้าล่ม| w1["warehouse"]
+  end
+  subgraph queued["ผ่าน queue — decouple"]
+    o2["order service"] -->|publish แล้ว return| q["queue (buffer)"]
+    q --> e2["email consumer\n(จังหวะตัวเอง)"]
+    q --> w2["warehouse consumer\n(ตามเก็บทีหลัง)"]
+  end`;
+
+การเปลี่ยนแค่จุดเดียวนี้ทำให้ได้สามอย่าง:
+
+1. **Decoupling** — producer ไม่รู้และไม่สนว่าใคร consume, มี consumer กี่ตัว หรือตอนนี้มันยังทำงานอยู่ไหม
+2. **Buffering (load leveling)** — spike หนึ่งหมื่น message นอนรออยู่ใน queue อย่างปลอดภัย consumer ค่อย ๆ ระบายออกในอัตราคงที่แทนที่จะโดนถล่ม
+3. **Resilience** — ถ้า consumer ล่ม message ก็รออยู่ใน queue พอมันกลับมาก็ตามเก็บต่อ ไม่มีอะไรหาย
+
+## trade-off: ได้ async แต่เสีย "ทันที"
+
+queue ไม่ได้มาฟรี ๆ แลกกับ decoupling คุณต้องยอมรับ:
+
+- **eventual ไม่ใช่ immediate** อีเมลถูกส่ง *ในไม่ช้า* ไม่ใช่ก่อนที่ HTTP response จะ return UX และ data model ของคุณต้องรับ gap นี้ได้
+- **มีชิ้นส่วนมากขึ้น** broker กลายเป็น infrastructure สำคัญที่คุณต้อง run, monitor และ secure
+- **debug ยากขึ้น** หนึ่ง request ไม่มี stack trace เส้นเดียวอีกต่อไป มันกระจายไปทั่ว producer, queue และ consumer
+
+## เมื่อไรควรใช้ queue (และเมื่อไรไม่ควร)
+
+หยิบ message queue มาใช้เมื่อ:
+
+- งานทำแบบ **asynchronous** ได้ — caller ไม่ต้องใช้ผลลัพธ์เพื่อ response
+- คุณต้อง **รองรับ spike** หรือเกลี่ย load ที่มาเป็นช่วง ๆ
+- service ควร **decouple** กันเพื่อไม่ให้ตัวหนึ่งล่มแล้วลามทั้งระบบ
+- คุณอยาก **กระจายงาน** ไปหลาย worker หรือ **broadcast** event ไปหลาย subscriber
+
+อยู่กับ synchronous (HTTP/gRPC ปกติ) เมื่อ:
+
+- caller **ต้องได้คำตอบเดี๋ยวนี้** ถึงจะไปต่อได้ (เช่น "username นี้ถูกใช้ไปหรือยัง?")
+- เป็น request/response ง่าย ๆ เร็ว ๆ ที่ไม่มี spike
+- น้ำหนักด้าน operation ของ broker ไม่คุ้มกับปัญหาตรงหน้า
+
+<Callout title="The one-line takeaway">
+message queue วาง buffer ไว้ระหว่าง producer กับ consumer ซึ่งให้คุณสามอย่าง — decoupling, load-leveling และ resilience — แลกกับความ immediate และชิ้นส่วนที่มากขึ้น ใช้กับงาน async, load ที่มาเป็น spike และการ fan-out; อยู่กับ synchronous เมื่อ caller ต้องการคำตอบเดี๋ยวนี้จริง ๆ
+</Callout>
+
+export const quizWhat = [
+  {
+    q: 'ต้นตอของปัญหาเมื่อ service เรียกกันตรง ๆ คืออะไร?',
+    options: [
+      'การเรียกตรง ๆ ส่ง JSON ไม่ได้',
+      'ชะตาของ caller ผูกกับ callee — ช้า, ล่ม หรือ spike ล้วนลามถึงกัน',
+      'HTTP ช้ากว่า messaging เสมอ',
+      'เรียกได้ทีละ service เท่านั้น',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'การเพิ่ม queue ให้ประโยชน์สามข้อใด?',
+    options: [
+      'encryption, compression และ caching',
+      'decoupling, buffering (load-leveling) และ resilience',
+      'latency ต่ำลง, typing แข็งแรงขึ้น และ retry ฟรี',
+      'indexing, sharding และ replication',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'การย้ายงานไปไว้หลัง queue คุณเสียอะไรไป?',
+    options: [
+      'ความสามารถในการส่ง message ขนาดใหญ่',
+      'ความ immediate — งานเกิดในไม่ช้า ไม่ใช่ก่อนที่ response จะ return',
+      'ความสามารถในการมีหลาย consumer',
+      'การ ordering ทุกรูปแบบ',
+    ],
+    answer: 1,
+  },
+  {
+    q: 'งานใดที่ไม่เหมาะกับ message queue?',
+    options: [
+      'ส่งอีเมลยืนยันหลังการสั่งของ',
+      'resize รูปที่อัปโหลดแบบ background',
+      'ตอบว่า "username นี้ว่างไหม?" ให้ฟอร์มสมัครที่ต้องใช้ผลลัพธ์เดี๋ยวนี้',
+      'รองรับ spike ของ analytics event',
+    ],
+    answer: 2,
+  },
+];
+
+<Quiz client:visible id="messaging-foundations/what-is-a-message-queue" questions={quizWhat} />
+
+<ProgressTracker client:visible id="messaging-foundations/what-is-a-message-queue" />
