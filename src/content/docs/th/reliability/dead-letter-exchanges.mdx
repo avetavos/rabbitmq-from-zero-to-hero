@@ -74,7 +74,7 @@ export const dlxDiagram = `flowchart LR
     ch.QueueBind("orders.dead", "", "dlx", false, nil)
 
     // the work queue dead-letters to the DLX
-    ch.QueueDeclare("orders", true, false, false, false, false, amqp.Table{
+    ch.QueueDeclare("orders", true, false, false, false, amqp.Table{
         "x-dead-letter-exchange": "dlx",
     })
 
