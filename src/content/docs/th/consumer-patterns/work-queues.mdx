@@ -15,7 +15,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 **work queue** (หรือเรียก *task queue* / *competing consumers*) คือม้างานของ RabbitMQ producer หนึ่งตัว publish งาน — resize รูปนี้, ส่ง email นี้, สร้าง report นี้ — แล้ว pool ของ **worker** แชร์งานกัน แต่ละงานไปหา worker ตัวเดียว
 
-นี่คือวิธี scale background job งานเยอะไป? เพิ่ม worker บน queue เดิม พวกมันแข่งกันดึง message และ RabbitMQ ส่งแต่ละ message ให้ตัวใดตัวหนึ่ง
+นี่คือวิธี scale background job งานเยอะไป? เพิ่ม worker บน queue เดิม worker เหล่านั้นแข่งกันดึง message และ RabbitMQ ส่งแต่ละ message ให้ตัวใดตัวหนึ่ง
 
 <Mermaid title="queue เดียว, worker แข่งกันหลายตัว" code={wqDiagram} />
 
@@ -25,11 +25,11 @@ export const wqDiagram = `flowchart LR
   q --> w2["Worker 2"]
   q --> w3["Worker 3"]`;
 
-## Round-robin และจุดอ่อนของมัน
+## Round-robin และจุดอ่อนของตัวเอง
 
 โดย default RabbitMQ ส่ง message แบบ **round-robin**: worker 1, worker 2, worker 3, worker 1 วนไป โดยไม่สนว่าแต่ละ worker ยุ่งแค่ไหน ซึ่งโอเคถ้าทุกงานใช้เวลาเท่ากัน แต่ถ้า worker 1 ได้งานช้าติด ๆ กัน ส่วน worker 2 ได้งานเร็ว round-robin ก็ยังป้อนงานเท่ากัน worker 1 เลยตกงานค้าง ส่วน worker 2 นั่งว่าง
 
-ตัวแก้คือ **prefetch** (`basic.qos`): บอก RabbitMQ ว่า "อย่าเพิ่งให้ message ใหม่กับ worker จนกว่ามันจะ ack ตัวที่แล้ว" ตั้ง prefetch เป็น 1 worker จะถือ unacked task ได้ทีละตัว worker ที่ช้าก็จะดึงงานถัดไปช้าลงเอง worker ที่ยุ่งจึงได้งานน้อยลงตามธรรมชาติ วิธีนี้เปลี่ยน round-robin ให้เป็น **fair dispatch**
+ตัวแก้คือ **prefetch** (`basic.qos`): บอก RabbitMQ ว่า "อย่าเพิ่งให้ message ใหม่กับ worker จนกว่าจะ ack ตัวที่แล้ว" ตั้ง prefetch เป็น 1 worker จะถือ unacked task ได้ทีละตัว worker ที่ช้าก็จะดึงงานถัดไปช้าลงเอง worker ที่ยุ่งจึงได้งานน้อยลงตามธรรมชาติ วิธีนี้เปลี่ยน round-robin ให้เป็น **fair dispatch**
 
 <Tabs syncKey="lang">
   <TabItem label="Node">

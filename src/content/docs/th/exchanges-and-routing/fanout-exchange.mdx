@@ -13,7 +13,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## copy ให้ทุกคน
 
-**fanout exchange** เป็น router ที่ง่ายที่สุด: มัน **ไม่สนใจ routing key เลย** และ copy message ทุกตัวไปยัง **ทุก queue ที่ bind กับมัน** publish ครั้งเดียว ได้ N queue เป็น copy อิสระ N ชุด
+**fanout exchange** เป็น router ที่ง่ายที่สุด: **ไม่สนใจ routing key เลย** และ copy message ทุกตัวไปยัง **ทุก queue ที่ bind ไว้** publish ครั้งเดียว ได้ N queue เป็น copy อิสระ N ชุด
 
 นี่คือวิธีทำ **broadcast** — หรือถ้ามองเป็น pattern ก็คือ **publish/subscribe** producer ประกาศ event หนึ่งครั้ง แล้ว subscriber ที่สนใจแต่ละตัวมี queue ของตัวเอง bind กับ exchange และรับ copy ของตัวเองไปประมวลผลอิสระ
 
@@ -29,7 +29,7 @@ export const fanoutDiagram = `flowchart LR
   x --> qa["queue: audit"]
   x --> qc["queue: cache-invalidation"]`;
 
-consumer แต่ละตัวประกาศ queue **ของตัวเอง** แล้ว bind เข้ากับ fanout exchange เพราะแต่ละตัวมี queue แยกกัน subscriber ที่ช้าตัวหนึ่งจึงไม่หน่วงตัวอื่น และแต่ละตัวประมวลผลตาม pace ของมันเอง
+consumer แต่ละตัวประกาศ queue **ของตัวเอง** แล้ว bind เข้ากับ fanout exchange เพราะแต่ละตัวมี queue แยกกัน subscriber ที่ช้าตัวหนึ่งจึงไม่หน่วงตัวอื่น และแต่ละตัวประมวลผลตาม pace ของตัวเอง
 
 <Tabs syncKey="lang">
   <TabItem label="Node">

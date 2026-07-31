@@ -1,6 +1,6 @@
 ---
 title: 'Queue Properties'
-description: 'durable, exclusive, auto-delete และ x-* arguments — flag ที่ set ตอน declare queue ซึ่งกำหนด lifecycle และพฤติกรรมของมัน'
+description: 'durable, exclusive, auto-delete และ x-* arguments — flag ที่ set ตอน declare queue ซึ่งกำหนด lifecycle และพฤติกรรมของตัวเอง'
 sidebar:
   order: 2
 ---
@@ -13,21 +13,21 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## การ declare queue คือการตัดสินใจ
 
-ทุกครั้งที่ declare queue คุณส่ง flag เข้าไปไม่กี่ตัว มันดูเหมือน boilerplate แต่แต่ละตัวเปลี่ยนว่า queue จะอยู่ได้นานแค่ไหนและใครใช้มันได้บ้าง ตั้งผิดแล้ว queue ของคุณอาจหายไปตอนที่ไม่คาดคิด หรือค้างอยู่ตลอดกาลตอนที่อยากให้มันหายไป
+ทุกครั้งที่ declare queue คุณส่ง flag เข้าไปไม่กี่ตัว ดูเหมือน boilerplate แต่แต่ละตัวเปลี่ยนว่า queue จะอยู่ได้นานแค่ไหนและใครใช้ queue นั้นได้บ้าง ตั้งผิดแล้ว queue ของคุณอาจหายไปตอนที่ไม่คาดคิด หรือค้างอยู่ตลอดกาลตอนที่อยากให้หายไป
 
 มี boolean flag สามตัวและถุงใส่ argument เพิ่มเติมอีกหนึ่งถุง
 
 ## `durable` — รอดจากการ restart broker
 
-**durable** queue ถูกเขียนลง disk ดังนั้น *definition* ของมันรอดจากการ restart RabbitMQ ส่วน queue ที่ไม่ durable (transient) จะถูกลืมเมื่อ broker restart
+**durable** queue ถูกเขียนลง disk ดังนั้น *definition* ของตัวเองรอดจากการ restart RabbitMQ ส่วน queue ที่ไม่ durable (transient) จะถูกลืมเมื่อ broker restart
 
-flag นี้คนเข้าใจผิดบ่อยที่สุด จึงต้องพูดให้ชัด: `durable` รักษา **ตัว queue** ไว้ ไม่ใช่ message ในนั้น ถ้าอยากให้ message รอดด้วย มันต้องถูก publish แบบ **persistent** (บทเรียนถัดไป) durable queue + persistent message คือคู่ที่ทำให้ "รอดจาก restart" — ขาดตัวใดตัวหนึ่งก็ยังเสียข้อมูลอยู่ดี
+flag นี้คนเข้าใจผิดบ่อยที่สุด จึงต้องพูดให้ชัด: `durable` รักษา **ตัว queue** ไว้ ไม่ใช่ message ในนั้น ถ้าอยากให้ message รอดด้วย message ต้องถูก publish แบบ **persistent** (บทเรียนถัดไป) durable queue + persistent message คือคู่ที่ทำให้ "รอดจาก restart" — ขาดตัวใดตัวหนึ่งก็ยังเสียข้อมูลอยู่ดี
 
 queue ไหนที่สำคัญ ให้ตั้ง `durable: true`
 
 ## `exclusive` — connection เดียวเท่านั้น แล้วก็หายไป
 
-**exclusive** queue ใช้ได้เฉพาะ connection ที่ declare มันเท่านั้น และ **ถูกลบอัตโนมัติเมื่อ connection นั้นปิด** เหมาะสำหรับ reply queue ส่วนตัวชั่วคราว (คุณจะเห็นในบทเรียน RPC) และไม่เหมาะกับอะไรที่ต้องใช้ร่วมกัน
+**exclusive** queue ใช้ได้เฉพาะ connection ที่ declare queue นั้นเท่านั้น และ **ถูกลบอัตโนมัติเมื่อ connection นั้นปิด** เหมาะสำหรับ reply queue ส่วนตัวชั่วคราว (คุณจะเห็นในบทเรียน RPC) และไม่เหมาะกับอะไรที่ต้องใช้ร่วมกัน
 
 ## `auto-delete` — หายไปเมื่อ consumer ตัวสุดท้ายจากไป
 
@@ -85,7 +85,7 @@ queue ไหนที่สำคัญ ให้ตั้ง `durable: true`
 | `x-queue-type` | `classic` หรือ `quorum` (บทเรียน clustering) |
 
 <Callout title="สรุปหนึ่งบรรทัด">
-การ declare queue คือการตั้ง lifecycle ของมัน: `durable` รักษา definition ของ queue ข้ามการ restart (แต่ไม่รวม message — พวกนั้นต้อง persistent ด้วย), `exclusive` ผูก queue กับ connection เดียวและลบมันเมื่อ disconnect และ `auto-delete` ลบมันเมื่อ consumer ตัวสุดท้ายจากไป ส่วนของขั้นสูงทั้งหมด — TTL, length limit, dead-lettering, quorum queue — ตั้งค่าผ่าน `x-*` arguments table
+การ declare queue คือการตั้ง lifecycle ของตัวเอง: `durable` รักษา definition ของ queue ข้ามการ restart (แต่ไม่รวม message — พวกนั้นต้อง persistent ด้วย), `exclusive` ผูก queue กับ connection เดียวแล้วลบทิ้งเมื่อ disconnect และ `auto-delete` ลบ queue เมื่อ consumer ตัวสุดท้ายจากไป ส่วนของขั้นสูงทั้งหมด — TTL, length limit, dead-lettering, quorum queue — ตั้งค่าผ่าน `x-*` arguments table
 </Callout>
 
 export const quizProps = [
@@ -103,7 +103,7 @@ export const quizProps = [
     q: 'exclusive queue ถูกลบเมื่อไร?',
     options: [
       'หลังจาก 30 วินาที',
-      'เมื่อ connection ที่ declare มันปิดลง',
+      'เมื่อ connection ที่ declare queue นั้นปิดลง',
       'เมื่อ broker restart',
       'ไม่มีวันถูกลบ — exclusive queue อยู่ถาวร',
     ],
@@ -113,7 +113,7 @@ export const quizProps = [
     q: 'auto-delete queue ถูกลบเมื่อ:',
     options: [
       'consumer ตัวสุดท้าย unsubscribe',
-      'มันได้รับ message ตัวแรก',
+      'ได้รับ message ตัวแรก',
       'producer disconnect',
       'message ถูก acknowledge',
     ],

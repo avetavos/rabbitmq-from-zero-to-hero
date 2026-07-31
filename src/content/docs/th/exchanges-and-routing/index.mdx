@@ -12,7 +12,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## routing คือหน้าที่ทั้งหมดของ exchange
 
-exchange ไม่เก็บอะไรเลย หน้าที่เดียวของมันคือ **routing**: รับ message ที่ publish เข้ามาแล้วตัดสินใจว่า queue ไหนบ้างจะได้ copy ไป *วิธี* ที่มันตัดสินใจถูกกำหนดโดย **type** ของ exchange เข้าใจทั้ง 4 type แล้วคุณจะออกแบบ topology ของ message flow ได้แทบทุกรูปแบบ
+exchange ไม่เก็บอะไรเลย หน้าที่เดียวของตัวเองคือ **routing**: รับ message ที่ publish เข้ามาแล้วตัดสินใจว่า queue ไหนบ้างจะได้ copy ไป *วิธี* ที่ตัดสินใจถูกกำหนดโดย **type** ของ exchange เข้าใจทั้ง 4 type แล้วคุณจะออกแบบ topology ของ message flow ได้แทบทุกรูปแบบ
 
 ## โมดูลนี้ครอบคลุมอะไรบ้าง
 
@@ -42,7 +42,7 @@ export const typesDiagram = `flowchart TB
 ที่เหลือ — pub/sub, การกระจายงาน, การ filter event — ก็แค่การเลือก exchange type บวกกับ binding ไม่กี่เส้น
 
 <Callout title="สรุปหนึ่งบรรทัด">
-exchange ทำหน้าที่ route ไม่เคยเก็บ message ไว้ **type** ของมันคือกฎ routing: `direct` match routing key เป๊ะ ๆ, `fanout` copy ไปทุก queue ที่ bind, `topic` match key แบบ pattern และ `headers` match จากค่า header เลือก type แล้วเพิ่ม binding เท่านี้ก็ออกแบบ message flow เสร็จ
+exchange ทำหน้าที่ route ไม่เคยเก็บ message ไว้ **type** ของตัวเองคือกฎ routing: `direct` match routing key เป๊ะ ๆ, `fanout` copy ไปทุก queue ที่ bind, `topic` match key แบบ pattern และ `headers` match จากค่า header เลือก type แล้วเพิ่ม binding เท่านี้ก็ออกแบบ message flow เสร็จ
 </Callout>
 
 export const quizIndex = [
@@ -62,7 +62,7 @@ export const quizIndex = [
       'ขนาดของ message',
       'exchange type (direct, fanout, topic หรือ headers)',
       'consumer ที่จะอ่าน message',
-      'ลำดับที่มัน publish เข้ามา',
+      'ลำดับที่ message ถูก publish เข้ามา',
     ],
     answer: 1,
   },

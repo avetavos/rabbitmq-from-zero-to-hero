@@ -13,9 +13,9 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## ปัญหา: message ที่ process ไม่ได้
 
-consumer ดึง message มา พยายาม process แล้ว fail — payload พัง, downstream service ล่ม หรือ record ที่มันอ้างถึงไม่มีอยู่ แล้วยังไงต่อ?
+consumer ดึง message มา พยายาม process แล้ว fail — payload พัง, downstream service ล่ม หรือ record ที่อ้างถึงไม่มีอยู่ แล้วยังไงต่อ?
 
-ถ้าคุณ **nack แบบ requeue** RabbitMQ จะเอามันกลับไปไว้หน้า queue คุณดึงมันมาอีก มัน fail อีก แล้วคุณก็ได้ **poison message** วนอยู่ในลูปแน่น ๆ เผา CPU และ block ทุกอย่างที่อยู่ข้างหลัง ถ้าคุณแค่ **drop** มันทิ้ง คุณก็ทำข้อมูลหายแบบเงียบ ๆ ทั้งสองอย่างรับไม่ได้
+ถ้าคุณ **nack แบบ requeue** RabbitMQ จะเอา message กลับไปไว้หน้า queue คุณดึงมาอีก แล้วก็ fail อีก แล้วคุณก็ได้ **poison message** วนอยู่ในลูปแน่น ๆ เผา CPU และ block ทุกอย่างที่อยู่ข้างหลัง ถ้าคุณแค่ **drop** ทิ้ง คุณก็ทำข้อมูลหายแบบเงียบ ๆ ทั้งสองอย่างรับไม่ได้
 
 ทางออกคือส่ง message ที่ fail ไปที่อื่นโดยตั้งใจ "ที่อื่น" นั้นคือ **dead-letter exchange (DLX)**
 
@@ -96,7 +96,7 @@ export const dlxDiagram = `flowchart LR
 
 1. เมื่อ fail ก็ publish message ไปยัง **retry queue** ที่มี TTL 30 วินาที และมี DLX ชี้กลับไปยัง main exchange
 2. message นั่งอยู่ใน retry queue เฉย ๆ 30 วินาที
-3. เมื่อ TTL หมด RabbitMQ จะ dead-letter มัน — ซึ่ง route มัน **กลับไปยัง main queue** เพื่อลองอีกครั้ง
+3. เมื่อ TTL หมด RabbitMQ จะ dead-letter message นั้น — ซึ่ง route **กลับไปยัง main queue** เพื่อลองอีกครั้ง
 
 คุณสร้าง delayed retry พร้อม backoff ด้วย queue config ล้วน ๆ — ไม่ต้องมี scheduler ไม่ต้อง `sleep` ใน consumer (โมดูล Consumer Patterns จะต่อยอดเป็น retry ladder เต็ม ๆ)
 
@@ -108,27 +108,27 @@ export const quizDlx = [
   {
     q: 'ทำไม nack message ที่ fail แบบ requeue=true ถึงอันตราย?',
     options: [
-      'มันลบ queue ทิ้ง',
-      'มัน re-deliver message ทันที เกิดลูป poison message แน่น ๆ ที่ fail ซ้ำ ๆ',
-      'มันปิด acknowledgement',
-      'มันส่ง message ไปทุก consumer พร้อมกัน',
+      'ลบ queue ทิ้ง',
+      're-deliver message ทันที เกิดลูป poison message แน่น ๆ ที่ fail ซ้ำ ๆ',
+      'ปิด acknowledgement',
+      'ส่ง message ไปทุก consumer พร้อมกัน',
     ],
     answer: 1,
   },
   {
     q: 'ข้อใดที่ *ไม่* ทำให้ message ถูก dead-letter?',
     options: [
-      'reject/nack มันแบบ requeue=false',
-      'message TTL ของมันหมดอายุใน queue',
+      'reject/nack แบบ requeue=false',
+      'message TTL ของตัวเองหมดอายุใน queue',
       'queue overflow เกิน max-length',
-      'ack มันสำเร็จ',
+      'ack ว่าสำเร็จ',
     ],
     answer: 3,
   },
   {
     q: 'จัดการ poison message ที่จะไม่มีวันสำเร็จอย่างไร?',
     options: [
-      'requeue มันตลอดไป',
+      'requeue ตลอดไป',
       'นับจำนวนครั้ง แล้วหลัง N ครั้งก็ route ไปยัง parking/dead queue ให้คนหรือ alert ดู',
       'ลบทั้ง queue ทิ้ง',
       'ปิด DLX',

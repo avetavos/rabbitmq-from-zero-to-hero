@@ -12,7 +12,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## Reliability คือโซ่ ไม่ใช่สวิตช์
 
-"อย่าทำ message ของฉันหาย" ฟังดูเหมือน feature เดียว แต่จริง ๆ มันคือ **โซ่ที่มีหลายข้อต่อ** และ message จะปลอดภัยได้แค่เท่ากับข้อที่อ่อนแอที่สุด message หายได้ที่จุดเหล่านี้:
+"อย่าทำ message ของฉันหาย" ฟังดูเหมือน feature เดียว แต่จริง ๆ แล้วคือ **โซ่ที่มีหลายข้อต่อ** และ message จะปลอดภัยได้แค่เท่ากับข้อที่อ่อนแอที่สุด message หายได้ที่จุดเหล่านี้:
 
 - ระหว่าง **publisher กับ broker** — publish ไม่ถึง หรือถึง exchange ที่ route ไปไม่เจอ queue ไหนเลย
 - ภายใน **broker** — broker restart แล้ว message ไม่ได้ถูกเขียนลง disk

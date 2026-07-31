@@ -16,7 +16,7 @@ queue จะแข็งแรงได้ก็ต่อเมื่อ **consu
 
 ## alarm block publisher (backpressure โดยตั้งใจ)
 
-คุณเจอ alarm ไปแล้วในบทที่แล้ว นี่คือว่ามัน *รู้สึก* ยังไง เมื่อ **memory** high-watermark หรือ limit ของ **disk** ว่างถูกข้าม RabbitMQ จะยก alarm และ **block ทุก publishing connection** publisher จะถูกหยุด — การเรียก `publish` จะไม่คืบหน้า — ขณะที่ consumer ยังไหล queue ออกต่อ
+คุณเจอ alarm ไปแล้วในบทที่แล้ว นี่คือว่า *รู้สึก* ยังไง เมื่อ **memory** high-watermark หรือ limit ของ **disk** ว่างถูกข้าม RabbitMQ จะยก alarm และ **block ทุก publishing connection** publisher จะถูกหยุด — การเรียก `publish` จะไม่คืบหน้า — ขณะที่ consumer ยังไหล queue ออกต่อ
 
 <Mermaid title="alarm ดัน backpressure กลับไปที่ publisher" code={alarmDiagram} />
 
@@ -31,7 +31,7 @@ export const alarmDiagram = `flowchart TB
 
 ## per-connection flow control
 
-ก่อนจะถึง alarm ระดับ global ด้วยซ้ำ RabbitMQ ใช้ **internal flow control** ต่อ connection: ถ้า publisher ส่งเร็วกว่าที่ broker จะ route และ persist ได้ broker จะ throttle connection นั้นโดยเฉพาะเพื่อไม่ให้มันถล่ม pipeline ภายใน ใน management UI connection แบบนี้จะแสดงสถานะ **`flow`** — เป็นสัญญาณปกติที่บอกว่า publisher นี้กำลังถูกจังหวะ ไม่ใช่ error
+ก่อนจะถึง alarm ระดับ global ด้วยซ้ำ RabbitMQ ใช้ **internal flow control** ต่อ connection: ถ้า publisher ส่งเร็วกว่าที่ broker จะ route และ persist ได้ broker จะ throttle connection นั้นโดยเฉพาะเพื่อไม่ให้ publisher ถล่ม pipeline ภายใน ใน management UI connection แบบนี้จะแสดงสถานะ **`flow`** — เป็นสัญญาณปกติที่บอกว่า publisher นี้กำลังถูกจังหวะ ไม่ใช่ error
 
 ## lazy queue และ backlog ขนาดใหญ่
 
@@ -39,7 +39,7 @@ export const alarmDiagram = `flowchart TB
 
 ## ออกแบบให้ alarm เกิดยาก
 
-alarm และ flow control เป็นตาข่ายกันตก ไม่ใช่โหมดการทำงานปกติ ถ้ามันทำงานสม่ำเสมอ แปลว่าออกแบบผิด เพื่อให้มันเกิดยาก:
+alarm และ flow control เป็นตาข่ายกันตก ไม่ใช่โหมดการทำงานปกติ ถ้าทำงานสม่ำเสมอ แปลว่าออกแบบผิด วิธีทำให้เกิดยาก:
 
 - **scale consumer** ให้ ack rate เท่ากับ publish rate ในระยะยาว
 - **bound queue** ด้วย `max-length` หรือ TTL เพื่อไม่ให้ producer ที่หลุดควบคุมโต queue ได้ไม่จำกัด (drop หรือ dead-letter ส่วนที่ล้นแทน)
@@ -48,7 +48,7 @@ alarm และ flow control เป็นตาข่ายกันตก ไ�
 - **alert เมื่อ queue depth ไต่ขึ้น** เพื่อ scale consumer *ก่อน* memory alarm จะทำงาน
 
 <Callout title="สรุปสั้น ๆ">
-เมื่อ producer วิ่งเร็วกว่า consumer, RabbitMQ ปกป้องตัวเอง: **memory/disk alarm block publisher** และ **per-connection flow control** จังหวะ publisher ที่เร็วเกินไป (สถานะ `flow`) **lazy/quorum queue** เก็บ backlog ลึก ๆ บน disk แทน RAM แต่ทั้งหมดนี้เป็นตาข่ายกันตก — ออกแบบให้มันเกิดยากด้วยการ scale consumer, **bound queue** ด้วย max-length/TTL และตอบสนองต่อ queue depth ที่ไต่ขึ้นก่อน alarm จะทำงาน
+เมื่อ producer วิ่งเร็วกว่า consumer, RabbitMQ ปกป้องตัวเอง: **memory/disk alarm block publisher** และ **per-connection flow control** จังหวะ publisher ที่เร็วเกินไป (สถานะ `flow`) **lazy/quorum queue** เก็บ backlog ลึก ๆ บน disk แทน RAM แต่ทั้งหมดนี้เป็นตาข่ายกันตก — ออกแบบให้เกิดยากด้วยการ scale consumer, **bound queue** ด้วย max-length/TTL และตอบสนองต่อ queue depth ที่ไต่ขึ้นก่อน alarm จะทำงาน
 </Callout>
 
 export const quizFlow = [
@@ -56,8 +56,8 @@ export const quizFlow = [
     q: 'RabbitMQ ทำอะไรกับ publisher เมื่อ memory หรือ disk alarm ทำงาน?',
     options: [
       'เร่งให้เร็วขึ้น',
-      'block พวกมัน (หยุด publish) ขณะที่ consumer ยังไหล backlog ออกต่อ',
-      'ลบ message ของพวกมันทิ้ง',
+      'block publisher (หยุด publish) ขณะที่ consumer ยังไหล backlog ออกต่อ',
+      'ลบ message ของ publisher ทิ้ง',
       'ตัด consumer ออกทั้งหมด',
     ],
     answer: 1,
@@ -76,7 +76,7 @@ export const quizFlow = [
     q: 'lazy queue (และ classic v2 / quorum storage) แก้ปัญหาอะไร?',
     options: [
       'serialization ช้า',
-      'backlog ลึกที่กิน RAM มากเกินไป — มันเก็บ message บน disk แทน',
+      'backlog ลึกที่กิน RAM มากเกินไป — เก็บ message ไว้บน disk แทน',
       'acknowledgement ที่หายไป',
       'routing key ไม่ตรงกัน',
     ],

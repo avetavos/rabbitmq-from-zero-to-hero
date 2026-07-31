@@ -12,10 +12,10 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## สองปรัชญาที่ต่างกัน
 
-RabbitMQ และ Kafka ต่างก็ย้าย message ระหว่าง service แต่มันสร้างบนแนวคิดที่ตรงข้ามกัน และความต่างนี้เป็นตัวตัดสินว่าคุณควรใช้ตัวไหน
+RabbitMQ และ Kafka ต่างก็ย้าย message ระหว่าง service แต่สร้างบนแนวคิดที่ตรงข้ามกัน และความต่างนี้เป็นตัวตัดสินว่าคุณควรใช้ตัวไหน
 
 - **RabbitMQ คือ smart broker กับ dumb consumer** broker ทำงานหนัก — routing, ติดตามว่าใคร ack อะไรไปแล้ว, redeliver ตัวที่ล้มเหลว message ถูก deliver, ถูก acknowledge แล้วก็ถูก **ลบทิ้ง** consumer แค่ process แล้ว ack
-- **Kafka คือ dumb broker กับ smart consumer** broker เป็น **log** แบบ append-only โดยพื้นฐาน: มันเขียน message ลง disk และเก็บไว้ มันไม่ทำ routing และไม่ลืมอะไรตอน consume consumer แต่ละตัวติดตามตำแหน่งของตัวเอง (**offset**) และย้อนกลับไปอ่านซ้ำได้
+- **Kafka คือ dumb broker กับ smart consumer** broker เป็น **log** แบบ append-only โดยพื้นฐาน: เขียน message ลง disk และเก็บไว้ ไม่ทำ routing และไม่ลืมอะไรตอน consume consumer แต่ละตัวติดตามตำแหน่งของตัวเอง (**offset**) และย้อนกลับไปอ่านซ้ำได้
 
 ความต่างข้อเดียวนั้น — *ลบตอน ack* เทียบกับ *เก็บไว้และติดตาม offset* — ส่งผลต่อเนื่องไปยังทุกอย่างที่เหลือ
 
@@ -50,7 +50,7 @@ export const vsDiagram = `flowchart TB
 
 หยิบ **Kafka** เมื่อคุณมี **stream ของ event** ที่ระบบอิสระหลายตัว consume ตามจังหวะของตัวเอง, เมื่อคุณต้องการ **replay** (consumer ใหม่ reprocess ประวัติ), หรือเมื่อ throughput มหาศาล — event sourcing, activity stream, metrics pipeline message คือ *fact* ที่บันทึกใน log ที่อยู่ต่อไป
 
-และบ่อยครั้งคำตอบที่ถูกคือ **ใช้ทั้งคู่**: Kafka เป็น event backbone ที่ทนทาน, RabbitMQ สำหรับ task queue และ RPC ระหว่าง service มันไม่ได้เป็นคู่แข่งกันเท่ากับเป็นเครื่องมือคนละแบบ
+และบ่อยครั้งคำตอบที่ถูกคือ **ใช้ทั้งคู่**: Kafka เป็น event backbone ที่ทนทาน, RabbitMQ สำหรับ task queue และ RPC ระหว่าง service ไม่ได้เป็นคู่แข่งกันเท่ากับเป็นเครื่องมือคนละแบบ
 
 <Callout title="สรุปหนึ่งบรรทัด">
 RabbitMQ คือ **smart broker** ที่ลบ message ทันทีที่ถูก acknowledge — เหมาะสำหรับกระจาย task แยกชิ้นพร้อม routing และ retry ที่ครบครัน Kafka คือ **log ที่เก็บไว้และ replay ได้** ที่ consumer ติดตาม offset ของตัวเอง — เหมาะสำหรับ event stream ที่หลายระบบ reprocess เลือกด้วยการถามว่า message นี้คือ *task ที่ทำครั้งเดียว* (RabbitMQ) หรือ *fact ที่ต้องเก็บและ replay* (Kafka)
@@ -58,7 +58,7 @@ RabbitMQ คือ **smart broker** ที่ลบ message ทันทีท�
 
 export const quizKafka = [
   {
-    q: 'เกิดอะไรขึ้นกับ message ใน RabbitMQ หลัง consumer acknowledge มัน?',
+    q: 'เกิดอะไรขึ้นกับ message ใน RabbitMQ หลัง consumer acknowledge?',
     options: [
       'ถูกเก็บไว้เพื่อ replay',
       'ถูกลบออกจาก queue',
@@ -72,8 +72,8 @@ export const quizKafka = [
     options: [
       'broker ลบ message ที่ส่งไปแล้ว',
       'consumer แต่ละตัวติดตาม offset ของตัวเอง และย้อนกลับไปอ่านซ้ำได้',
-      'มันส่ง ack ที่ลบ message',
-      'มันอ่าน message ซ้ำไม่ได้',
+      'ส่ง ack ที่ลบ message',
+      'อ่าน message ซ้ำไม่ได้',
     ],
     answer: 1,
   },
@@ -93,7 +93,7 @@ export const quizKafka = [
       'RabbitMQ เร็วกว่า Kafka เสมอ',
       'RabbitMQ คือ smart broker ที่ลบ message ตอน ack; Kafka คือ log ที่เก็บไว้ พร้อม offset ที่ consumer ติดตามเอง',
       'Kafka รองรับ routing; RabbitMQ ไม่รองรับ',
-      'มันเหมือนกันหมดยกเว้นชื่อ',
+      'เหมือนกันหมดยกเว้นชื่อ',
     ],
     answer: 1,
   },

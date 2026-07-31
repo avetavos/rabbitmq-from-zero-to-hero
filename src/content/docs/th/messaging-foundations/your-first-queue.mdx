@@ -13,7 +13,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## ตัวอย่างที่เล็กที่สุดที่มีประโยชน์
 
-มาส่ง message หนึ่งตัวผ่าน RabbitMQ กัน เพื่อให้เรียบง่ายที่สุด เราจะใช้ **default exchange** — direct exchange ที่ไม่มีชื่อ ซึ่ง RabbitMQ ให้มาอัตโนมัติ โดย routing key ก็คือชื่อ queue นั่นเอง มันทำให้เรา "publish ตรงเข้า queue" ได้โดยยังไม่ต้องประกาศ exchange (ทุกบทเรียนถัด ๆ ไปใช้ named exchange จริง)
+มาส่ง message หนึ่งตัวผ่าน RabbitMQ กัน เพื่อให้เรียบง่ายที่สุด เราจะใช้ **default exchange** — direct exchange ที่ไม่มีชื่อ ซึ่ง RabbitMQ ให้มาอัตโนมัติ โดย routing key ก็คือชื่อ queue นั่นเอง ทำให้เรา "publish ตรงเข้า queue" ได้โดยยังไม่ต้องประกาศ exchange (ทุกบทเรียนถัด ๆ ไปใช้ named exchange จริง)
 
 ก่อนอื่น run broker บนเครื่องด้วย Docker:
 
@@ -25,7 +25,7 @@ port `5672` คือ AMQP (สำหรับแอปคุณ); `15672` ค�
 
 ## producer: publish หนึ่ง message
 
-producer connect, เปิด channel, ประกาศ queue (เพื่อให้มันมีอยู่จริง) แล้ว publish message เข้าไป
+producer connect, เปิด channel, ประกาศ queue (เพื่อให้แน่ใจว่า queue มีอยู่จริง) แล้ว publish message เข้าไป
 
 <Tabs syncKey="lang">
   <TabItem label="Node">
@@ -79,9 +79,9 @@ producer connect, เปิด channel, ประกาศ queue (เพื่�
 
 สังเกต exchange ที่เป็น string ว่าง (`""`) — นั่นคือ default exchange และ routing key คือชื่อ queue
 
-## consumer: รับมัน
+## consumer: รับ message
 
-consumer connect, ประกาศ queue เดียวกัน (การประกาศเป็น idempotent — ทำทั้งสองฝั่งได้อย่างปลอดภัย) แล้ว subscribe callback ของมันจะทำงานทุกครั้งที่มี message ถูก deliver
+consumer connect, ประกาศ queue เดียวกัน (การประกาศเป็น idempotent — ทำทั้งสองฝั่งได้อย่างปลอดภัย) แล้ว subscribe callback ของตัวเองจะทำงานทุกครั้งที่มี message ถูก deliver
 
 <Tabs syncKey="lang">
   <TabItem label="Node">
@@ -151,10 +151,10 @@ export const helloDiagram = `flowchart LR
 
 1. **ทั้งสองฝั่งประกาศ queue** การประกาศเป็น idempotent และมั่นใจว่า queue มีอยู่ไม่ว่าใครจะ start ก่อน
 2. **message ก็แค่ bytes** RabbitMQ ไม่สนใจ format ของคุณ — string, JSON, protobuf อะไรก็ได้ การ serialize เป็นหน้าที่ของคุณ
-3. **consumer ack** หลัง process แล้ว มันบอก RabbitMQ ว่า "เสร็จแล้ว" เพื่อให้ message ถูกลบ ถ้าข้ามอันนี้ไป คุณจะได้ message เดิมอีกครั้งตอน reconnect (ซึ่งเป็นความปลอดภัยที่คุณอยากได้พอดี — เพิ่มเติมในบท acknowledgement)
+3. **consumer ack** หลัง process แล้ว เป็นการบอก RabbitMQ ว่า "เสร็จแล้ว" เพื่อให้ message ถูกลบ ถ้าข้ามอันนี้ไป คุณจะได้ message เดิมอีกครั้งตอน reconnect (ที่เป็นความปลอดภัยที่คุณอยากได้พอดี — เพิ่มเติมในบท acknowledgement)
 
 <Callout title="The one-line takeaway">
-flow ขั้นต่ำคือ: connect → เปิด channel → ประกาศ queue ทั้งสองฝั่ง → publish bytes → consume แล้ว ack default exchange (string ว่าง) ให้คุณ publish ตรงเข้า queue ด้วยชื่อได้เพื่อเริ่มต้น แต่ระบบจริงประกาศ named exchange แล้ว route ผ่านมัน — ซึ่งคือโมดูลถัดไป
+flow ขั้นต่ำคือ: connect → เปิด channel → ประกาศ queue ทั้งสองฝั่ง → publish bytes → consume แล้ว ack default exchange (string ว่าง) ให้คุณ publish ตรงเข้า queue ด้วยชื่อได้เพื่อเริ่มต้น แต่ระบบจริงประกาศ named exchange แล้ว route ผ่าน exchange นั้น — ซึ่งคือโมดูลถัดไป
 </Callout>
 
 export const quizFirst = [

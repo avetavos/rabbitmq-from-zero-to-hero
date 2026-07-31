@@ -1,6 +1,6 @@
 ---
 title: 'RabbitMQ & AMQP'
-description: 'RabbitMQ คืออะไร, AMQP 0-9-1 protocol และ model ที่มัน implement และทำไม design แบบ exchange-binding-queue ถึงยืดหยุ่นกว่า queue เปล่า ๆ'
+description: 'RabbitMQ คืออะไร, AMQP 0-9-1 protocol และ model ที่ RabbitMQ implement และทำไม design แบบ exchange-binding-queue ถึงยืดหยุ่นกว่า queue เปล่า ๆ'
 sidebar:
   order: 3
 ---
@@ -12,17 +12,17 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## RabbitMQ implement protocol
 
-**RabbitMQ** คือ message broker และ protocol หลักที่มันพูดคือ **AMQP 0-9-1** (Advanced Message Queuing Protocol) ความต่างนี้สำคัญ: AMQP คือ *open specification* ว่า client กับ broker คุยกันอย่างไร ส่วน RabbitMQ คือหนึ่ง *implementation* (ที่นิยมมาก) ของมัน เพราะ protocol เป็นมาตรฐาน จึงมี client ให้แทบทุกภาษา และทั้งหมด interoperate กับ broker ตัวเดียวกันได้
+**RabbitMQ** คือ message broker และ protocol หลักที่พูดคือ **AMQP 0-9-1** (Advanced Message Queuing Protocol) ความต่างนี้สำคัญ: AMQP คือ *open specification* ว่า client กับ broker คุยกันอย่างไร ส่วน RabbitMQ คือหนึ่ง *implementation* (ที่นิยมมาก) ของตัวเอง เพราะ protocol เป็นมาตรฐาน จึงมี client ให้แทบทุกภาษา และทั้งหมด interoperate กับ broker ตัวเดียวกันได้
 
-RabbitMQ ยังพูด protocol อื่นผ่าน plugin ได้ด้วย — MQTT, STOMP และ Streams protocol ของตัวเอง — แต่ AMQP 0-9-1 คือ model ที่คอร์สนี้สร้างอยู่บนมัน และเป็นตัวที่คุณจะใช้ 95% ของเวลา
+RabbitMQ ยังพูด protocol อื่นผ่าน plugin ได้ด้วย — MQTT, STOMP และ Streams protocol ของตัวเอง — แต่ AMQP 0-9-1 คือ model หลักที่คอร์สนี้ยึดเป็นฐาน และเป็นตัวที่คุณจะใช้ 95% ของเวลา
 
 ## AMQP model: producer ไม่ publish เข้า queue
 
 นี่คือไอเดียที่สำคัญที่สุดใน AMQP และเป็นสิ่งที่คนมาจาก queue แบบง่าย ๆ มักแปลกใจ:
 
-> **producer ไม่เคย publish เข้า queue ตรง ๆ มัน publish เข้า *exchange***
+> **producer ไม่เคย publish เข้า queue ตรง ๆ แต่ publish เข้า *exchange***
 
-จากนั้น exchange จะตัดสินใจ — จากกฎที่เรียกว่า **binding** — ว่า message ควรตกลงไปที่ queue ตัวไหนบ้าง queue แบบธรรมดาบอกว่า "เอาอันนี้ใส่ queue X" แต่ AMQP บอกว่า "ส่งให้ที่ทำการไปรษณีย์ (exchange) แล้วให้มัน route ตามกฎ"
+จากนั้น exchange จะตัดสินใจ — จากกฎที่เรียกว่า **binding** — ว่า message ควรตกลงไปที่ queue ตัวไหนบ้าง queue แบบธรรมดาบอกว่า "เอาอันนี้ใส่ queue X" แต่ AMQP บอกว่า "ส่งให้ที่ทำการไปรษณีย์ (exchange) แล้วให้ exchange route ตามกฎ"
 
 <Mermaid title="AMQP 0-9-1 routing model" code={amqpDiagram} />
 
@@ -35,7 +35,7 @@ export const amqpDiagram = `flowchart LR
 
 ## ทำไม indirection นี้ถึงทรงพลัง
 
-การวาง exchange ไว้ระหว่าง producer กับ queue ฟังดูเหมือนพิธีรีตองเพิ่ม แต่มันให้ความยืดหยุ่นมหาศาล:
+การวาง exchange ไว้ระหว่าง producer กับ queue ฟังดูเหมือนพิธีรีตองเพิ่ม แต่ให้ความยืดหยุ่นมหาศาล:
 
 - **หนึ่ง message ไปได้หลายปลายทาง** exchange copy message ไปหลาย queue พร้อมกันได้ (broadcast) — producer publish ครั้งเดียวโดยไม่ต้องเปลี่ยนอะไร
 - **route ตาม content** exchange แต่ละ type route ด้วย key แบบ exact, แบบ pattern หรือตาม attribute ของ message — ดังนั้น "payment event ทั้งหมด" กับ "เฉพาะ failed payment ในไทย" จึงแยกเป็นคนละ queue ที่ป้อนจาก publisher เดียวกันได้
@@ -66,7 +66,7 @@ export const quizAmqp = [
     q: 'ความสัมพันธ์ระหว่าง RabbitMQ กับ AMQP คืออะไร?',
     options: [
       'เป็นชื่อสองชื่อของ product เดียวกัน',
-      'AMQP คือ open protocol/spec; RabbitMQ คือ broker ที่ implement มัน',
+      'AMQP คือ open protocol/spec; RabbitMQ คือ broker ที่ implement protocol นั้น',
       'RabbitMQ คือ protocol; AMQP คือ client library',
       'AMQP มาแทน RabbitMQ',
     ],
@@ -85,10 +85,10 @@ export const quizAmqp = [
   {
     q: 'ทำไม design ที่มี exchange อยู่ตรงกลางถึงทรงพลัง?',
     options: [
-      'มันทำให้ message เล็กลง',
-      'มันทำให้ publish ครั้งเดียวไปถึงหลาย queue, route ตาม content และเพิ่ม consumer โดยไม่ต้องเปลี่ยน producer',
-      'มันตัดความจำเป็นของ consumer ออกไป',
-      'มันการันตี exactly-once delivery ฟรี ๆ',
+      'ทำให้ message เล็กลง',
+      'ทำให้ publish ครั้งเดียวไปถึงหลาย queue, route ตาม content และเพิ่ม consumer โดยไม่ต้องเปลี่ยน producer',
+      'ตัดความจำเป็นของ consumer ออกไป',
+      'การันตี exactly-once delivery ฟรี ๆ',
     ],
     answer: 1,
   },

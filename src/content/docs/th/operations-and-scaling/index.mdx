@@ -10,7 +10,7 @@ import Callout from '../../../../components/Callout.astro';
 import Quiz from '../../../../components/Quiz.tsx';
 import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
-## จาก "มันทำงานได้" ไปสู่ "มันอยู่รอด"
+## จาก "ทำงานได้" ไปสู่ "อยู่รอดได้จริง"
 
 ทุกอย่างก่อนหน้านี้สมมติว่ามี broker ตัวเดียวที่แข็งแรง แต่ production ต่างออกไป: node ล่มได้, queue กลายเป็น bottleneck ได้, connection churn ได้ และ message ที่หลั่งไหลเข้ามาอาจดัน broker จนชน memory limit โมดูลนี้พูดถึงการทำให้ RabbitMQ **available, observable และ stable** ภายใต้ load จริง
 
@@ -21,7 +21,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 | Clustering & quorum queues | node รวมกันเป็น cluster อย่างไร และทำไม quorum queue คือ HA default ยุคใหม่ |
 | Connections & channels | การจัดการ connection บน production, heartbeat และ automatic recovery |
 | Monitoring & management | management UI, metric ที่สำคัญจริง และ memory/disk alarm |
-| Flow control & alarms | เกิดอะไรขึ้นเมื่อ broker โดน overload และออกแบบเลี่ยงมันอย่างไร |
+| Flow control & alarms | เกิดอะไรขึ้นเมื่อ broker โดน overload และออกแบบเลี่ยงอย่างไร |
 
 ## สามคำถามที่ production ถามเสมอ
 
@@ -29,10 +29,10 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 export const opsDiagram = `flowchart TB
   avail["Availability\nnode ล่ม → message รอดไหม?"] --> hero["RabbitMQ\nที่แข็งแรง"]
-  obs["Observability\nเห็น queue depth\nก่อนมันจะเจ็บไหม?"] --> hero
+  obs["Observability\nเห็น queue depth\nก่อนจะเจ็บไหม?"] --> hero
   stab["Stability\nเกิดอะไรขึ้นเมื่อ\nbroker เต็ม?"] --> hero`;
 
-- **Availability** — ถ้า node ล่ม queue กับ message ของมันรอดไหม? (Clustering + quorum queue)
+- **Availability** — ถ้า node ล่ม queue กับ message ของตัวเองรอดไหม? (Clustering + quorum queue)
 - **Observability** — เห็น backlog ที่กำลังโต หรือ consumer ที่ค้าง ก่อน user จะรู้สึกไหม? (Monitoring)
 - **Stability** — เมื่อ producer วิ่งเร็วกว่า consumer, broker ปกป้องตัวเองอย่างนุ่มนวลไหม? (Flow control + alarm)
 
@@ -64,10 +64,10 @@ export const quizIndex = [
   {
     q: 'ทำไมการ monitor queue depth ถึงสำคัญ?',
     options: [
-      'มันทำให้ consumer เร็วขึ้น',
+      'ทำให้ consumer เร็วขึ้น',
       'backlog ที่กำลังโตเตือนคุณว่ามี consumer ที่ค้างหรือช้าเกินไป ก่อน user จะได้รับผลกระทบ',
-      'มันลดขนาด message',
-      'มันจำเป็นสำหรับการ publish',
+      'ลดขนาด message',
+      'จำเป็นสำหรับการ publish',
     ],
     answer: 1,
   },

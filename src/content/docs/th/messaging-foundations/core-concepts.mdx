@@ -33,11 +33,11 @@ export const channelDiagram = `flowchart LR
 
 คุณเจอพวกนี้ในบทที่แล้ว นี่คือเวอร์ชันที่แม่นยำขึ้น:
 
-- **exchange** รับทุก message ที่ publish เข้ามา แล้วใช้ type และ binding ของมันตัดสินใจว่า queue ไหนได้ message มันไม่เก็บอะไรไว้เลย
+- **exchange** รับทุก message ที่ publish เข้ามา แล้วใช้ type และ binding ของตัวเองตัดสินใจว่า queue ไหนได้ message ไม่เก็บอะไรไว้เลย
 - **queue** คือ buffer ที่เรียงลำดับ ซึ่ง *เก็บ* message ไว้จนกว่า consumer จะมารับ นี่คือสิ่งเดียวที่เก็บ message
-- **binding** เชื่อม exchange เข้ากับ queue มันอาจมี **binding key** ที่เมื่อรวมกับ **routing key** ของ message จะเป็นตัวกำหนดว่า message ตรงเงื่อนไขไหม
+- **binding** เชื่อม exchange เข้ากับ queue และอาจมี **binding key** ที่เมื่อรวมกับ **routing key** ของ message จะเป็นตัวกำหนดว่า message ตรงเงื่อนไขไหม
 
-routing key ก็แค่ label ที่เป็น string ที่ producer ติดไว้บนแต่ละ message (เช่น `order.created` หรือ `payment.failed`) จะสำคัญไหมขึ้นกับ type ของ exchange — fanout exchange ไม่สนใจมันเลย ส่วน topic exchange pattern-match บนมัน นั่นคือทั้งโมดูล Exchanges & Routing
+routing key ก็แค่ label ที่เป็น string ที่ producer ติดไว้บนแต่ละ message (เช่น `order.created` หรือ `payment.failed`) จะสำคัญไหมขึ้นกับ type ของ exchange — fanout exchange ไม่สนใจ routing key เลย ส่วน topic exchange เอา routing key มา pattern-match นั่นคือทั้งโมดูล Exchanges & Routing
 
 ## การเดินทางของ message หนึ่งตัว
 
@@ -62,12 +62,12 @@ export const journeyDiagram = `sequenceDiagram
 2. exchange **route** ไปยัง queue ที่ตรงเงื่อนไข (ศูนย์, หนึ่ง หรือหลาย queue)
 3. message **รอ** ใน queue จนกว่าจะมี consumer พร้อม
 4. queue **deliver** ให้ consumer
-5. consumer process แล้วส่ง **acknowledgement** — จากนั้น queue ถึงจะลบมัน
+5. consumer process แล้วส่ง **acknowledgement** — จากนั้น queue ถึงจะลบ message
 
-step สุดท้ายคือตาข่ายกันตก: จนกว่า consumer จะ ack RabbitMQ ถือว่างานยังไม่เสร็จ ถ้า consumer crash กลางคัน message ที่ยังไม่ ack จะถูก redeliver (มีบทเรียนทั้งบทเรื่อง acknowledgement — มันคือวิธีที่ "at-least-once" delivery ทำงาน)
+step สุดท้ายคือตาข่ายกันตก: จนกว่า consumer จะ ack RabbitMQ ถือว่างานยังไม่เสร็จ ถ้า consumer crash กลางคัน message ที่ยังไม่ ack จะถูก redeliver (มีบทเรียนทั้งบทเรื่อง acknowledgement — นี่คือวิธีที่ "at-least-once" delivery ทำงาน)
 
 <Callout title="The one-line takeaway">
-เปิด **หนึ่ง connection ต่อ process** และ **หลาย channel ที่ถูก ๆ** บนมัน (channel ไม่ thread-safe — หนึ่ง channel ต่อ worker) ชีวิตของ message คือ: producer publish เข้า **exchange** → route ตาม **binding** ไป **queue** → deliver ให้ **consumer** → ถูกลบก็ต่อเมื่อ consumer **acknowledge** เท่านั้น มีแค่ queue ที่เก็บ message; exchange แค่ route
+เปิด **หนึ่ง connection ต่อ process** และ **หลาย channel ที่ถูก ๆ** บน connection นั้น (channel ไม่ thread-safe — หนึ่ง channel ต่อ worker) ชีวิตของ message คือ: producer publish เข้า **exchange** → route ตาม **binding** ไป **queue** → deliver ให้ **consumer** → ถูกลบก็ต่อเมื่อ consumer **acknowledge** เท่านั้น มีแค่ queue ที่เก็บ message; exchange แค่ route
 </Callout>
 
 export const quizConcepts = [
@@ -105,7 +105,7 @@ export const quizConcepts = [
     q: 'message ถูกลบออกจาก queue เมื่อไร?',
     options: [
       'ทันทีที่ deliver ให้ consumer',
-      'หลังจาก consumer acknowledge มัน',
+      'หลังจาก consumer acknowledge message',
       'เมื่อ producer publish message ตัวถัดไป',
       'หลัง timer 30 วินาทีคงที่',
     ],

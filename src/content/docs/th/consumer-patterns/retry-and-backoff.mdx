@@ -13,7 +13,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## naive retry ที่เผา CPU ของคุณ
 
-message ประมวลผลไม่สำเร็จ — downstream API ล่ม, ข้อมูล resolve ไม่ได้ชั่วคราว reaction ที่นึกออกทันทีคือ `nack` มันแบบ requeue ให้มันกลับเข้า queue แล้วลองใหม่
+message ประมวลผลไม่สำเร็จ — downstream API ล่ม, ข้อมูล resolve ไม่ได้ชั่วคราว reaction ที่นึกออกทันทีคือ `nack` แบบ requeue ให้ message กลับเข้า queue แล้วลองใหม่
 
 ทำแบบนั้นคุณจะได้ **tight poison loop** message กลับไปที่หน้า queue *ทันที* fail *ทันที* และ worker ของคุณก็หมุนเร็วที่สุดเท่าที่ทำได้ กระหน่ำ dependency ที่ล่มอยู่และกลบ message ที่ปกติ immediate requeue แทบไม่เคยเป็นสิ่งที่คุณต้องการสำหรับ failure จริง
 
@@ -126,17 +126,17 @@ delay อย่างเดียวไม่พอ — message ที่จะ 
 สำหรับ backoff แบบเพิ่มขึ้น (exponential) ให้ใช้ retry queue หลายตัวที่ TTL โตขึ้นเรื่อย ๆ — 10s, 1m, 10m — แล้วเลื่อน message ขึ้นบันไดตามจำนวนครั้งที่ retry เพิ่มขึ้น
 
 <Callout title="The one-line takeaway">
-อย่า immediate-requeue message ที่ fail เด็ดขาด — มันคือ tight poison loop ที่กระหน่ำ dependency ที่ล่มอยู่ ให้สร้าง **delayed retry** ด้วย retry queue ที่มี TTL แล้ว dead-letter กลับมาที่ main queue, track **attempt count** ใน header, และหลังครบ N ครั้ง route message ไป **parking queue** ให้คนเข้าไปตรวจ TTL ที่โตขึ้นเรื่อย ๆ ให้คุณได้ exponential backoff
+อย่า immediate-requeue message ที่ fail เด็ดขาด — นั่นคือ tight poison loop ที่กระหน่ำ dependency ที่ล่มอยู่ ให้สร้าง **delayed retry** ด้วย retry queue ที่มี TTL แล้ว dead-letter กลับมาที่ main queue, track **attempt count** ใน header, และหลังครบ N ครั้ง route message ไป **parking queue** ให้คนเข้าไปตรวจ TTL ที่โตขึ้นเรื่อย ๆ ให้คุณได้ exponential backoff
 </Callout>
 
 export const quizRetry = [
   {
     q: 'ทำไมการ nack-แล้ว-requeue ทันทีเป็นกลยุทธ์ retry ที่แย่?',
     options: [
-      'มันลบ message',
-      'มันสร้าง tight poison loop ที่หมุนถี่และกระหน่ำ dependency ที่ล่มอยู่',
-      'มัน duplicate message ไปยังทุก consumer',
-      'มันปิด acknowledgement',
+      'ลบ message',
+      'สร้าง tight poison loop ที่หมุนถี่และกระหน่ำ dependency ที่ล่มอยู่',
+      'duplicate message ไปยังทุก consumer',
+      'ปิด acknowledgement',
     ],
     answer: 1,
   },
@@ -155,8 +155,8 @@ export const quizRetry = [
     options: [
       'เพื่อบีบอัด message',
       'เพื่อให้ message ที่จะไม่มีวันสำเร็จถูก park ในที่สุด แทนที่จะ retry ไปตลอด',
-      'เพื่อ route มันตาม topic',
-      'เพื่อทำให้มัน persistent',
+      'เพื่อ route ตาม topic',
+      'เพื่อทำให้ message persistent',
     ],
     answer: 1,
   },

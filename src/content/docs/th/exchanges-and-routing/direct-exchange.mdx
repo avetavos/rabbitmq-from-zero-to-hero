@@ -13,9 +13,9 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## routing แบบ match เป๊ะ
 
-**direct exchange** route message ไปยัง queue ที่มี **binding key** ตรงกับ **routing key** ของ message เป๊ะ ๆ ไม่มี pattern ไม่มี wildcard — เทียบ string ให้เท่ากันตรง ๆ มันคือ exchange type ที่ง่ายที่สุด และเป็นตัวที่หยิบมาใช้เมื่อ message มีปลายทางเป็นหมวดหมู่ที่ชัดเจนหมวดเดียว
+**direct exchange** route message ไปยัง queue ที่มี **binding key** ตรงกับ **routing key** ของ message เป๊ะ ๆ ไม่มี pattern ไม่มี wildcard — เทียบ string ให้เท่ากันตรง ๆ นี่คือ exchange type ที่ง่ายที่สุด และเป็นตัวที่หยิบมาใช้เมื่อ message มีปลายทางเป็นหมวดหมู่ที่ชัดเจนหมวดเดียว
 
-จริง ๆ คุณเคยใช้ direct exchange มาแล้วโดยไม่รู้ตัว: **default exchange** คือ direct exchange ที่ไม่มีชื่อ ซึ่งทุก queue จะถูก bind เข้าไปด้วยชื่อของตัวเองโดยอัตโนมัติ นั่นคือเหตุผลที่ publish ไปที่ routing key `hello` ด้วย exchange เป็น string ว่าง แล้วมันไปลงที่ queue ชื่อ `hello`
+จริง ๆ คุณเคยใช้ direct exchange มาแล้วโดยไม่รู้ตัว: **default exchange** คือ direct exchange ที่ไม่มีชื่อ ซึ่งทุก queue จะถูก bind เข้าไปด้วยชื่อของตัวเองโดยอัตโนมัติ นั่นคือเหตุผลที่ publish ไปที่ routing key `hello` ด้วย exchange เป็น string ว่าง แล้ว message ไปลงที่ queue ชื่อ `hello`
 
 ## ตัวอย่าง: log ตาม severity
 
@@ -29,7 +29,7 @@ export const directDiagram = `flowchart LR
   x -->|"bind key: info"| qi["queue: info"]
   x -. "ไม่ match 'error'" .-> qi`;
 
-message ที่ publish ด้วย routing key `error` จะ match แค่ binding ที่ key เป็น `error` เท่านั้น มันจึงไปเข้า queue `errors` ไม่ใช่ `info`
+message ที่ publish ด้วย routing key `error` จะ match แค่ binding ที่ key เป็น `error` เท่านั้น จึงไปเข้า queue `errors` ไม่ใช่ `info`
 
 <Tabs syncKey="lang">
   <TabItem label="Node">

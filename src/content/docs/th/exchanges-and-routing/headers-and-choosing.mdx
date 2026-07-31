@@ -26,7 +26,7 @@ export const headersDiagram = `flowchart LR
   x -->|"x-match: all\nformat=pdf, type=report"| q1["queue: pdf-reports"]
   x -. "x-match: all\nformat=png" .-> q2["queue: images"]`;
 
-routing ด้วย header ทรงพลังเมื่อเกณฑ์ของคุณเป็นหลายมิติจริง ๆ และยัดลงเป็น dotted string เส้นเดียวไม่ลงตัว แต่ในทางปฏิบัติมันเป็น type ที่ **ใช้น้อยที่สุด**: routing key แบบ topic ที่ออกแบบดี ๆ มักสื่อเจตนาเดียวกันได้ง่ายกว่าและ match เร็วกว่า หยิบ headers มาใช้เฉพาะเมื่อ routing ขึ้นกับ attribute อิสระหลายตัวจริง ๆ
+routing ด้วย header ทรงพลังเมื่อเกณฑ์ของคุณเป็นหลายมิติจริง ๆ และยัดลงเป็น dotted string เส้นเดียวไม่ลงตัว แต่ในทางปฏิบัติ headers เป็น type ที่ **ใช้น้อยที่สุด**: routing key แบบ topic ที่ออกแบบดี ๆ มักสื่อเจตนาเดียวกันได้ง่ายกว่าและ match เร็วกว่า หยิบ headers มาใช้เฉพาะเมื่อ routing ขึ้นกับ attribute อิสระหลายตัวจริง ๆ
 
 ## เลือก exchange type
 
@@ -42,8 +42,8 @@ routing ด้วย header ทรงพลังเมื่อเกณฑ์�
 หลักคิดคร่าว ๆ:
 
 - **เริ่มจาก type ที่ง่ายที่สุดที่ใช้ได้** ถ้า key เป๊ะตัวเดียวพอ ก็ใช้ `direct` อย่าเผื่อไปหยิบ `topic` แบบเก็งกำไร
-- **event bus ให้ default เป็น `topic`** มันครอบคลุม direct และ fanout คุณจึงเหลือที่เพิ่ม subscriber ที่ละเอียดขึ้นได้โดยไม่ต้องแก้ producer
-- **เลี่ยง `headers` เว้นแต่จำเป็นจริง ๆ** routing key แบบ dotted ที่ดีเกือบทุกครั้งเอาชนะมันเรื่องความชัดและความเร็ว
+- **event bus ให้ default เป็น `topic`** topic ครอบคลุมทั้ง direct และ fanout คุณจึงเหลือที่เพิ่ม subscriber ที่ละเอียดขึ้นได้โดยไม่ต้องแก้ producer
+- **เลี่ยง `headers` เว้นแต่จำเป็นจริง ๆ** routing key แบบ dotted ที่ดีเกือบทุกครั้งเอาชนะ headers เรื่องความชัดและความเร็ว
 - **ออกแบบ routing-key scheme แต่เนิ่น ๆ** `domain.detail.action` (เช่น `order.eu.created`) คือ convention ที่ควรตกลงกันก่อน producer ตัวแรกจะขึ้น
 
 <Callout title="สรุปหนึ่งบรรทัด">
@@ -62,7 +62,7 @@ export const quizHeaders = [
     answer: 1,
   },
   {
-    q: 'headers binding ใช้ "x-match: any" message จะ match เมื่อมัน:',
+    q: 'headers binding ใช้ "x-match: any" message จะ match เมื่อ:',
     options: [
       'มี header ครบทุกตัวของ binding',
       'มี header อย่างน้อยหนึ่งตัวของ binding',
@@ -84,10 +84,10 @@ export const quizHeaders = [
   {
     q: 'ทำไม headers exchange ถึงถูกใช้น้อยในทางปฏิบัติ?',
     options: [
-      'มันตั้ง durable ไม่ได้',
+      'ตั้ง durable ไม่ได้',
       'routing key แบบ topic ที่ออกแบบดีมักสื่อเจตนาเดียวกันได้ง่ายกว่าและ match เร็วกว่า',
-      'มันรองรับ binding ได้ตัวเดียว',
-      'มันทิ้ง message ที่ไม่มี header',
+      'รองรับ binding ได้ตัวเดียว',
+      'ทิ้ง message ที่ไม่มี header',
     ],
     answer: 1,
   },

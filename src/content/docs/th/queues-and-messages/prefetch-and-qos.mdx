@@ -13,13 +13,13 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## ปัญหา: worker ตัวเดียวกินหมด
 
-เอา consumer สองตัวมาต่อกับ queue หนึ่ง RabbitMQ จะแจก message แบบ **round-robin** — ตัวละหนึ่งสลับกันไป ฟังดูยุติธรรม แต่มันยุติธรรมโดย *จำนวน* ไม่ใช่โดย *ปริมาณงาน* ถ้ามันดัน message ให้เร็วที่สุดโดยไม่คิด consumer ที่คว้า message ช้า ๆ ไปสิบตัวก็จมงาน ขณะที่อีกตัวนั่งว่าง ที่แย่กว่านั้น ด้วย manual ack และไม่มี limit broker อาจยัด message ที่ยัง unacked เป็น *ร้อย ๆ* ตัวให้ consumer ตัวเดียว จน memory ของมันระเบิด
+เอา consumer สองตัวมาต่อกับ queue หนึ่ง RabbitMQ จะแจก message แบบ **round-robin** — ตัวละหนึ่งสลับกันไป ฟังดูยุติธรรม แต่ยุติธรรมโดย *จำนวน* ไม่ใช่โดย *ปริมาณงาน* ถ้า broker ดัน message ให้เร็วที่สุดโดยไม่คิด consumer ที่คว้า message ช้า ๆ ไปสิบตัวก็จมงาน ขณะที่อีกตัวนั่งว่าง ที่แย่กว่านั้น ด้วย manual ack และไม่มี limit broker อาจยัด message ที่ยัง unacked เป็น *ร้อย ๆ* ตัวให้ consumer ตัวเดียว จน memory ของ consumer เองระเบิด
 
 ทางแก้คือ **prefetch** ตั้งผ่าน `basic.qos`
 
 ## prefetch ทำอะไร
 
-prefetch จำกัดจำนวน message ที่ยัง **unacknowledged** ที่ consumer ถือได้พร้อมกัน ตั้งเป็น `1` แล้ว RabbitMQ จะไม่ให้ message ตัวที่สองจนกว่ามันจะ ack ตัวแรก ตั้งเป็น `50` แล้ว consumer มี in flight ได้ถึง 50 ตัว
+prefetch จำกัดจำนวน message ที่ยัง **unacknowledged** ที่ consumer ถือได้พร้อมกัน ตั้งเป็น `1` แล้ว RabbitMQ จะไม่ให้ message ตัวที่สองจนกว่าจะ ack ตัวแรก ตั้งเป็น `50` แล้ว consumer มี in flight ได้ถึง 50 ตัว
 
 นี่เปลี่ยน round-robin ให้เป็น **fair dispatch**: consumer ที่ยุ่งจะหยุดรับงานใหม่จนกว่าจะตามทัน message จึงไหลไปหาใครก็ตามที่ว่างจริง ๆ โดยธรรมชาติ
 
@@ -71,7 +71,7 @@ default ที่ดีสำหรับ background job ทั่วไปค�
 </Tabs>
 
 <Callout title="สรุปหนึ่งบรรทัด">
-โดย default RabbitMQ แจก message แบบ round-robin โดย *จำนวน* ซึ่งปล่อยให้ consumer ตัวซวยกินงานช้าไปคนเดียวขณะที่ตัวอื่นว่าง — และด้วย manual ack ที่ไม่มี limit มันอาจทำ memory ของ consumer ล้น **prefetch** (`basic.qos`) จำกัดจำนวน unacked message ต่อ consumer เปลี่ยนมันเป็น **fair dispatch** ใช้ค่าต่ำ (มักเป็น 1) สำหรับงานช้า/ไม่สม่ำเสมอ และค่าสูงกว่าสำหรับงานเร็วสม่ำเสมอ อย่าปล่อยให้ไม่จำกัด
+โดย default RabbitMQ แจก message แบบ round-robin โดย *จำนวน* ซึ่งปล่อยให้ consumer ตัวซวยกินงานช้าไปคนเดียวขณะที่ตัวอื่นว่าง — และด้วย manual ack ที่ไม่มี limit broker อาจดัน message จนทำ memory ของ consumer ล้น **prefetch** (`basic.qos`) จำกัดจำนวน unacked message ต่อ consumer เปลี่ยนเป็น **fair dispatch** ใช้ค่าต่ำ (มักเป็น 1) สำหรับงานช้า/ไม่สม่ำเสมอ และค่าสูงกว่าสำหรับงานเร็วสม่ำเสมอ อย่าปล่อยให้ไม่จำกัด
 </Callout>
 
 export const quizQos = [
@@ -98,10 +98,10 @@ export const quizQos = [
   {
     q: 'ทำไม prefetch แบบไม่จำกัดถึงอันตรายเมื่อใช้ manual ack?',
     options: [
-      'มันปิด acknowledgement',
+      'ปิด acknowledgement',
       'broker อาจดัน unacked message เป็นร้อยตัวให้ consumer เดียว จน memory ล้นและงานไม่สมดุล',
-      'มันทำให้ message ไม่ durable',
-      'มันบังคับปิด round-robin',
+      'ทำให้ message ไม่ durable',
+      'บังคับปิด round-robin',
     ],
     answer: 1,
   },

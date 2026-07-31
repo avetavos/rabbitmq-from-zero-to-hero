@@ -12,7 +12,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## ห้ารูปทรง broker เดียว
 
-ตลอดคอร์สนี้คุณได้เจอ building block มาแล้ว ต่อไปนี้คือ pattern ที่มีชื่อเรียก ซึ่งคุณหยิบมาใช้ได้ทันที โดยแต่ละอันจับคู่กับ exchange type ที่ใช้ implement มัน
+ตลอดคอร์สนี้คุณได้เจอ building block มาแล้ว ต่อไปนี้คือ pattern ที่มีชื่อเรียก ซึ่งคุณหยิบมาใช้ได้ทันที โดยแต่ละอันจับคู่กับ exchange type ที่ใช้ implement
 
 ### Work queue (competing consumers)
 
@@ -28,7 +28,7 @@ event เดียว subscriber **อิสระ** หลายตัว แ�
 
 ### RPC (request/reply)
 
-การสร้าง synchronous call-and-wait ขึ้นมาบน messaging โดยใช้ `correlation_id` และ `reply_to` มีประโยชน์เป็นครั้งคราว แต่ส่วนใหญ่มันเป็นสัญญาณว่าจริง ๆ คุณอยากได้ RPC/HTTP call ตรง ๆ มากกว่า — ใช้ให้น้อย
+การสร้าง synchronous call-and-wait ขึ้นมาบน messaging โดยใช้ `correlation_id` และ `reply_to` มีประโยชน์เป็นครั้งคราว แต่ส่วนใหญ่เป็นสัญญาณว่าจริง ๆ คุณอยากได้ RPC/HTTP call ตรง ๆ มากกว่า — ใช้ให้น้อย
 
 ### Event-driven choreography
 
@@ -42,7 +42,7 @@ export const choreoDiagram = `flowchart LR
   x --> q2["inventory queue"] --> s2["Inventory service"]
   x --> q3["email queue"] --> s3["Notification service"]`;
 
-หมายเหตุเรื่อง **saga**: เมื่อ business process ครอบคลุมหลาย service (place order → charge → reserve stock → ship) choreography ร้อยมันเข้าด้วยกันเป็น chain ของ event และแต่ละ step publish step ถัดไป ถ้า step ไหนล้มเหลว compensating event จะ undo step ก่อนหน้า RabbitMQ ส่ง event; ส่วน logic ของ saga อยู่ใน service ของคุณ
+หมายเหตุเรื่อง **saga**: เมื่อ business process ครอบคลุมหลาย service (place order → charge → reserve stock → ship) choreography ร้อยแต่ละ step เข้าด้วยกันเป็น chain ของ event และแต่ละ step publish step ถัดไป ถ้า step ไหนล้มเหลว compensating event จะ undo step ก่อนหน้า RabbitMQ ส่ง event; ส่วน logic ของ saga อยู่ใน service ของคุณ
 
 ## การเลือก pattern
 
@@ -75,7 +75,7 @@ export const quizPatterns = [
       'pub/sub ให้ subscriber ทุกตัวได้ copy ของตัวเอง; work queue ให้แต่ละ message ไปหา worker ตัวเดียว',
       'pub/sub ทำงานได้กับ Kafka เท่านั้น',
       'work queue ใช้ acknowledgement ไม่ได้',
-      'มันคือ pattern เดียวกันแค่ชื่อต่างกัน',
+      'เป็น pattern เดียวกันแค่ชื่อต่างกัน',
     ],
     answer: 0,
   },

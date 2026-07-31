@@ -14,14 +14,14 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 **RabbitMQ คือ message broker: infrastructure ที่วางอยู่ตรงกลางระหว่าง service ที่ *ผลิต* งาน กับ service ที่ *ทำ* งาน เพื่อให้สองฝั่งไม่ต้องคุยกันตรง ๆ** producer โยน message เข้า RabbitMQ แล้วไปทำอย่างอื่นต่อ ส่วน consumer ก็หยิบไปทำเมื่อพร้อม
 
-การมีตัวกลางคั่นตรงนี้ — buffer ตรงกลาง — คือหัวใจทั้งหมด มันทำให้ระบบรับมือกับ spike ได้, ทนต่อการที่ consumer ล่ม และ scale สองฝั่งแยกจากกันได้
+การมีตัวกลางคั่นตรงนี้ — buffer ตรงกลาง — คือหัวใจทั้งหมด ทำให้ระบบรับมือกับ spike ได้, ทนต่อการที่ consumer ล่ม และ scale สองฝั่งแยกจากกันได้
 
 ## โมดูลนี้ครอบคลุมอะไรบ้าง
 
 | บทเรียน | สิ่งที่คุณจะได้เรียน |
 |--------|-------------------|
 | What is a message queue? | ปัญหาที่ async messaging แก้ — decoupling, buffering และ resilience |
-| RabbitMQ & AMQP | RabbitMQ คืออะไร และ AMQP 0-9-1 model ที่มัน implement |
+| RabbitMQ & AMQP | RabbitMQ คืออะไร และ AMQP 0-9-1 model ที่ RabbitMQ implement |
 | Core concepts | producer, consumer, connection, channel, exchange, queue, binding, message |
 | Your first queue | publish และ consume message ใน Node, Python และ Go |
 
@@ -66,10 +66,10 @@ export const quizIndex = [
   {
     q: 'messaging ต่างจาก call แบบ synchronous (HTTP/gRPC) อย่างไร?',
     options: [
-      'มันคืนค่า response กลับมาทันทีเสมอ',
-      'มันเป็น fire-and-forget — ส่งงานให้ broker แล้วไปทำต่อ แทนที่จะ block รอคำตอบ',
-      'มันต้องการให้ทั้งสอง service ออนไลน์พร้อมกัน',
-      'มันส่งข้อมูลแบบ structured ไม่ได้',
+      'คืนค่า response กลับมาทันทีเสมอ',
+      'เป็น fire-and-forget — ส่งงานให้ broker แล้วไปทำต่อ แทนที่จะ block รอคำตอบ',
+      'ต้องการให้ทั้งสอง service ออนไลน์พร้อมกัน',
+      'ส่งข้อมูลแบบ structured ไม่ได้',
     ],
     answer: 1,
   },

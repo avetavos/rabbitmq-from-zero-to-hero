@@ -13,18 +13,18 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## คำสัญญา: อย่าทำงานหาย
 
-คำถามหลักที่ queue ต้องตอบให้ได้คือ: ถ้า consumer หยิบ message ไปแล้ว **crash ก่อนทำเสร็จ** งานนั้นจะเป็นอย่างไร? acknowledgement คือคำตอบ และมันคือกลไก reliability ที่สำคัญที่สุดใน RabbitMQ
+คำถามหลักที่ queue ต้องตอบให้ได้คือ: ถ้า consumer หยิบ message ไปแล้ว **crash ก่อนทำเสร็จ** งานนั้นจะเป็นอย่างไร? acknowledgement คือคำตอบ และเป็นกลไก reliability ที่สำคัญที่สุดใน RabbitMQ
 
-**acknowledgement** (ack) คือการที่ consumer บอก broker ว่า: *"ฉันประมวลผล message นี้เสร็จสมบูรณ์แล้ว — ลบมันได้เลย"* จนกว่า ack จะมาถึง RabbitMQ จะถือ message นั้นเป็น *unacknowledged* และจะ redeliver มันถ้า channel ของ consumer ตาย
+**acknowledgement** (ack) คือการที่ consumer บอก broker ว่า: *"ฉันประมวลผล message นี้เสร็จสมบูรณ์แล้ว — ลบได้เลย"* จนกว่า ack จะมาถึง RabbitMQ จะถือ message นั้นเป็น *unacknowledged* และจะ redeliver ให้ใหม่ถ้า channel ของ consumer ตาย
 
 ## manual vs automatic ack
 
-มีสอง mode และความต่างมันมหาศาล:
+มีสอง mode และความต่างมหาศาล:
 
-- **automatic ack** (`autoAck: true` / `auto_ack=True`): message ถือว่า deliver แล้ว *ทันทีที่มันออกจาก broker* ก่อนที่ code ของคุณจะได้แตะ เร็วดี แต่ถ้า consumer crash กลางคัน message นั้นก็ **หายไป** — RabbitMQ ลืมมันไปแล้ว นี่คือ at-most-once และมันทำงานหายเงียบ ๆ
-- **manual ack**: RabbitMQ deliver message แต่เก็บมันเป็น unacknowledged จนกว่าคุณจะ ack อย่างชัดเจน ถ้า channel ปิดโดยไม่มี ack message จะถูก **redeliver** ไปยัง consumer ตัวอื่น นี่คือ at-least-once และเป็นสิ่งที่คุณต้องการสำหรับงานที่สำคัญ
+- **automatic ack** (`autoAck: true` / `auto_ack=True`): message ถือว่า deliver แล้ว *ทันทีที่ออกจาก broker* ก่อนที่ code ของคุณจะได้แตะ เร็วดี แต่ถ้า consumer crash กลางคัน message นั้นก็ **หายไป** — RabbitMQ ลืม message นั้นไปแล้ว นี่คือ at-most-once และทำงานหายเงียบ ๆ
+- **manual ack**: RabbitMQ deliver message แต่ยังเก็บไว้เป็น unacknowledged จนกว่าคุณจะ ack อย่างชัดเจน ถ้า channel ปิดโดยไม่มี ack message จะถูก **redeliver** ไปยัง consumer ตัวอื่น นี่คือ at-least-once และเป็นสิ่งที่คุณต้องการสำหรับงานที่สำคัญ
 
-กฎคือ: **ใช้ manual ack กับทุกอย่างที่คุณเสียมันไปไม่ได้**
+กฎคือ: **ใช้ manual ack กับทุกอย่างที่คุณเสียไปไม่ได้**
 
 ## ack, nack, reject
 
@@ -32,9 +32,9 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 - **ack** — เสร็จ ลบได้
 - **nack** (หรือ **reject**) พร้อม `requeue: true` — ประมวลผลไม่ได้; เอากลับเข้า queue เพื่อลองใหม่
-- **nack**/**reject** พร้อม `requeue: false` — ประมวลผลไม่ได้และลองใหม่ก็ไม่ช่วย; ทิ้งมัน (หรือส่งไป dead-letter exchange ถ้าตั้งค่าไว้)
+- **nack**/**reject** พร้อม `requeue: false` — ประมวลผลไม่ได้และลองใหม่ก็ไม่ช่วย; ทิ้งไปเลย (หรือส่งไป dead-letter exchange ถ้าตั้งค่าไว้)
 
-**`redelivered`** flag บน delivery บอกคุณว่า "คุณเคยเห็นตัวนี้มาแล้ว" — เป็นสัญญาณว่าความพยายามครั้งก่อน fail คุณจึงจัดการมันอย่างระวังขึ้นได้
+**`redelivered`** flag บน delivery บอกคุณว่า "คุณเคยเห็นตัวนี้มาแล้ว" — เป็นสัญญาณว่าความพยายามครั้งก่อน fail คุณจึงจัดการอย่างระวังขึ้นได้
 
 ## lifecycle
 
@@ -101,7 +101,7 @@ export const ackDiagram = `sequenceDiagram
 </Tabs>
 
 <Callout title="สรุปหนึ่งบรรทัด">
-acknowledgement คือวิธีที่ RabbitMQ การันตี at-least-once delivery: ด้วย **manual ack** message จะอยู่เป็น unacknowledged จนกว่า consumer จะ ack มันอย่างชัดเจน crash กลางการประมวลผลจึงทำให้เกิด **redelivery** แทนที่จะทำงานหาย automatic ack เร็วกว่าแต่ทำ message หายเมื่อ fail ให้ ack ตอนสำเร็จ, nack-with-requeue สำหรับ error ที่ลองใหม่ได้ และ nack-without-requeue (ไป DLX) สำหรับ poison message
+acknowledgement คือวิธีที่ RabbitMQ การันตี at-least-once delivery: ด้วย **manual ack** message จะอยู่เป็น unacknowledged จนกว่า consumer จะ ack อย่างชัดเจน crash กลางการประมวลผลจึงทำให้เกิด **redelivery** แทนที่จะทำงานหาย automatic ack เร็วกว่าแต่ทำ message หายเมื่อ fail ให้ ack ตอนสำเร็จ, nack-with-requeue สำหรับ error ที่ลองใหม่ได้ และ nack-without-requeue (ไป DLX) สำหรับ poison message
 </Callout>
 
 export const quizAck = [
@@ -109,7 +109,7 @@ export const quizAck = [
     q: 'acknowledgement ใน RabbitMQ คืออะไร?',
     options: [
       'producer ยืนยันว่า message ถูก publish แล้ว',
-      'consumer บอก broker ว่ามันประมวลผล message เสร็จแล้ว จึงลบได้',
+      'consumer บอก broker ว่าประมวลผล message เสร็จแล้ว จึงลบได้',
       'heartbeat ระหว่าง broker กับ client',
       'สำเนาของ message ที่ส่งกลับไปยัง exchange',
     ],
@@ -118,8 +118,8 @@ export const quizAck = [
   {
     q: 'ทำไม automatic ack ถึงเสี่ยงสำหรับงานสำคัญ?',
     options: [
-      'มันช้ากว่า manual ack',
-      'message ถือว่าเสร็จทันทีที่ออกจาก broker การ crash ของ consumer จึงทำให้มันหาย',
+      'ช้ากว่า manual ack',
+      'message ถือว่าเสร็จทันทีที่ออกจาก broker การ crash ของ consumer จึงทำให้ message หาย',
       'ใช้กับ durable queue ไม่ได้',
       'ต้องใช้ priority queue',
     ],

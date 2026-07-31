@@ -13,7 +13,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## routing ด้วย pattern
 
-**topic exchange** match routing key ของ message กับ **pattern** ในแต่ละ binding มันยืดหยุ่นที่สุดในบรรดา exchange type: direct คือ "เท่ากัน", fanout คือ "ทั้งหมด" และ topic คือ "match รูปทรงนี้" มันเปิดให้ subscriber บอกว่า "ฉันอยากได้ event *แบบเหล่านี้*" โดยที่ producer ไม่ต้องรู้ว่าใครฟังอยู่
+**topic exchange** match routing key ของ message กับ **pattern** ในแต่ละ binding เป็น exchange type ที่ยืดหยุ่นที่สุด: direct คือ "เท่ากัน", fanout คือ "ทั้งหมด" และ topic คือ "match รูปทรงนี้" topic จึงเปิดให้ subscriber บอกว่า "ฉันอยากได้ event *แบบเหล่านี้*" โดยที่ producer ไม่ต้องรู้ว่าใครฟังอยู่
 
 routing key มีโครงสร้างเป็น word คั่นด้วยจุด: `order.created`, `payment.failed.th`, `sensor.temperature.warehouse-3` ส่วน binding key ใช้รูปแบบ dotted เดียวกันบวก wildcard สองตัว:
 
@@ -89,10 +89,10 @@ topic exchange เลียนแบบอีกสอง type ได้:
 - binding key ที่ **ไม่มี wildcard** (`order.created`) ทำงานเหมือน binding แบบ **direct** เป๊ะ
 - binding key ที่เป็นแค่ `#` match **ทุกอย่าง** ทำงานเหมือน **fanout**
 
-ด้วยเหตุนี้ หลายทีมจึงตั้ง topic exchange เป็น default สำหรับ event bus — มันไม่มีต้นทุนเพิ่มและเหลือที่ให้เพิ่ม subscriber ที่ละเอียดขึ้นทีหลัง trade-off คือวินัย: routing-key scheme ที่ดีและสม่ำเสมอ (`domain.detail.action`) คือสิ่งที่ทำให้ topic routing อ่านง่ายแทนที่จะยุ่งเหยิง
+ดังนั้น หลายทีมจึงตั้ง topic exchange เป็น default สำหรับ event bus — ไม่มีต้นทุนเพิ่มและเหลือที่ให้เพิ่ม subscriber ที่ละเอียดขึ้นทีหลัง trade-off คือวินัย: routing-key scheme ที่ดีและสม่ำเสมอ (`domain.detail.action`) คือสิ่งที่ทำให้ topic routing อ่านง่ายแทนที่จะยุ่งเหยิง
 
 <Callout title="สรุปหนึ่งบรรทัด">
-topic exchange match routing key แบบ dotted กับ **pattern** ของ binding: `*` match หนึ่ง word พอดี, `#` match ศูนย์ word ขึ้นไป มันเป็น type ที่ยืดหยุ่นที่สุด — เลียนแบบ direct (ไม่มี wildcard) หรือ fanout (`#`) ได้ จึงเป็น default ที่ดีสำหรับ event bus ตราบใดที่คุณรักษา key scheme แบบ `domain.detail.action` ให้สม่ำเสมอ
+topic exchange match routing key แบบ dotted กับ **pattern** ของ binding: `*` match หนึ่ง word พอดี, `#` match ศูนย์ word ขึ้นไป เป็น type ที่ยืดหยุ่นที่สุด — เลียนแบบ direct (ไม่มี wildcard) หรือ fanout (`#`) ได้ จึงเป็น default ที่ดีสำหรับ event bus ตราบใดที่คุณรักษา key scheme แบบ `domain.detail.action` ให้สม่ำเสมอ
 </Callout>
 
 export const quizTopic = [
@@ -129,10 +129,10 @@ export const quizTopic = [
   {
     q: 'ทำไมหลายทีมตั้ง topic exchange เป็น default ของ event bus?',
     options: [
-      'มันเป็น exchange type เดียวที่ durable ได้',
-      'มันเลียนแบบ direct และ fanout ได้ เหลือที่ให้เพิ่ม subscriber ที่ละเอียดขึ้นทีหลัง',
-      'มันบีบอัด routing key',
-      'มันการันตี exactly-once delivery',
+      'เป็น exchange type เดียวที่ durable ได้',
+      'เลียนแบบ direct และ fanout ได้ เหลือที่ให้เพิ่ม subscriber ที่ละเอียดขึ้นทีหลัง',
+      'บีบอัด routing key',
+      'การันตี exactly-once delivery',
     ],
     answer: 1,
   },

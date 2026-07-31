@@ -13,7 +13,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## คุณ operate สิ่งที่มองไม่เห็นไม่ได้
 
-RabbitMQ มาพร้อม **management plugin** ที่ให้ web UI และ HTTP API บน port `15672` เปิดมันขึ้นมาแล้วคุณจะเฝ้าดู queue, connection, channel และ rate ได้แบบ live:
+RabbitMQ มาพร้อม **management plugin** ที่ให้ web UI และ HTTP API บน port `15672` เปิดขึ้นมาแล้วคุณจะเฝ้าดู queue, connection, channel และ rate ได้แบบ live:
 
 ```bash
 rabbitmq-plugins enable rabbitmq_management
@@ -87,7 +87,7 @@ RabbitMQ เฝ้าดูทรัพยากรสองอย่างแ�
 - **Memory alarm** — memory ที่ใช้ทั้งหมดข้าม high-watermark (default 40% ของ RAM)
 - **Disk alarm** — disk ว่างต่ำกว่า limit ที่ตั้งไว้
 
-เมื่อ alarm ทำงาน RabbitMQ จะ **block publisher** (หยุดรับ message ใหม่) แต่ยัง deliver ให้ consumer ต่อ เพื่อให้ backlog ไหลออกแทนที่จะโตขึ้น alarm เป็นกลไกความปลอดภัย ไม่ใช่ความล้มเหลว — แต่ถ้ามันทำงาน *บ่อย* แปลว่า consumer ช้าเกินไปหรือ queue ไม่มีขอบเขต บทเรียนถัดไปจะพูดถึงว่า publisher-blocking รู้สึกยังไงและออกแบบเลี่ยงอย่างไร
+เมื่อ alarm ทำงาน RabbitMQ จะ **block publisher** (หยุดรับ message ใหม่) แต่ยัง deliver ให้ consumer ต่อ เพื่อให้ backlog ไหลออกแทนที่จะโตขึ้น alarm เป็นกลไกความปลอดภัย ไม่ใช่ความล้มเหลว — แต่ถ้า alarm ทำงาน *บ่อย* แปลว่า consumer ช้าเกินไปหรือ queue ไม่มีขอบเขต บทเรียนถัดไปจะพูดถึงว่า publisher-blocking รู้สึกยังไงและออกแบบเลี่ยงอย่างไร
 
 <Callout title="สรุปสั้น ๆ">
 เปิด **management plugin** เพื่อใช้ UI + HTTP API และ scrape **Prometheus → Grafana** สำหรับ monitoring จริง เฝ้าดูสัญญาณชุดเล็ก ๆ — **queue depth, unacked count, publish เทียบ ack rate และ consumer count** — และ alert เมื่อ depth ไต่ขึ้นขณะที่ ack นิ่ง (consumer ค้าง) **memory และ disk alarm** ของ RabbitMQ จะ block publisher เพื่อปกป้องตัวเอง; alarm ที่ทำงานบ่อยแปลว่า consumer ตามไม่ทัน

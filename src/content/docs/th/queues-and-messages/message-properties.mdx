@@ -19,23 +19,23 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 property เดียวที่มีผลต่อ reliability คือ **`delivery_mode`** (หรือเรียกว่า "persistent"):
 
-- `delivery_mode = 2` (**persistent**) — RabbitMQ เขียน message ลง disk มันจึงรอดจากการ restart broker ได้
+- `delivery_mode = 2` (**persistent**) — RabbitMQ เขียน message ลง disk message จึงรอดจากการ restart broker ได้
 - `delivery_mode = 1` (**transient**, ค่า default ใน AMQP ดิบ ๆ) — message อยู่ใน memory และหายเมื่อ restart
 
-จับคู่มันกับ durable queue (บทเรียนที่แล้ว) กฎนี้ควรจำ: **durable queue + persistent message = รอดจากการ restart** ขาดครึ่งใดครึ่งหนึ่งข้อมูลก็เสี่ยง
+จับคู่กับ durable queue (บทเรียนที่แล้ว) กฎนี้ควรจำ: **durable queue + persistent message = รอดจากการ restart** ขาดครึ่งใดครึ่งหนึ่งข้อมูลก็เสี่ยง
 
 persistence ไม่ฟรี — การเขียนลง disk กิน throughput นี่คือ trade-off จริงที่คุณจะชั่งน้ำหนักในโมดูล reliability
 
 ## property ที่เป็นข้อมูลประกอบ
 
-ที่เหลืออธิบาย message เพื่อให้ consumer (และเครื่องมือต่าง ๆ) จัดการมันได้ถูกต้อง:
+ที่เหลืออธิบาย message เพื่อให้ consumer (และเครื่องมือต่าง ๆ) จัดการได้ถูกต้อง:
 
 | Property | จุดประสงค์ |
 |----------|---------|
 | `content_type` | เช่น `application/json` — จะตีความ body อย่างไร |
 | `content_encoding` | เช่น `gzip` |
 | `headers` | metadata key/value อิสระ (ใช้โดย headers exchange ด้วย) |
-| `correlation_id` | จับคู่ reply กับ request ของมัน (pattern RPC) |
+| `correlation_id` | จับคู่ reply กับ request ของตัวเอง (pattern RPC) |
 | `reply_to` | queue ที่ควรส่ง reply ไป |
 | `message_id` | id เฉพาะตัว — มีประโยชน์สำหรับ idempotency และ deduplication |
 | `timestamp` | เวลาที่ message ถูกสร้าง |
@@ -88,7 +88,7 @@ persistence ไม่ฟรี — การเขียนลง disk กิน
 </Tabs>
 
 <Callout title="สรุปหนึ่งบรรทัด">
-message พก body บวก properties property ส่วนใหญ่เป็นข้อมูลประกอบ (`content_type`, `message_id`, `headers`, `correlation_id`) แต่ **`delivery_mode`/persistent** คือตัวที่สำคัญต่อ reliability: เมื่อรวมกับ durable queue มันคือสิ่งที่ทำให้ message รอดจากการ restart broker ได้ — โดยแลกกับการเขียน disk ทุกครั้งที่ publish
+message พก body บวก properties property ส่วนใหญ่เป็นข้อมูลประกอบ (`content_type`, `message_id`, `headers`, `correlation_id`) แต่ **`delivery_mode`/persistent** คือตัวที่สำคัญต่อ reliability: เมื่อรวมกับ durable queue นี่คือสิ่งที่ทำให้ message รอดจากการ restart broker ได้ — โดยแลกกับการเขียน disk ทุกครั้งที่ publish
 </Callout>
 
 export const quizMsg = [
@@ -118,7 +118,7 @@ export const quizMsg = [
       'ไม่มี — ฟรีเสมอ',
       'throughput ลดลง เพราะ message ถูกเขียนลง disk',
       'message ใหญ่ขึ้นบน wire',
-      'consumer ต้อง decode มันต่างออกไป',
+      'consumer ต้อง decode ต่างออกไป',
     ],
     answer: 1,
   },

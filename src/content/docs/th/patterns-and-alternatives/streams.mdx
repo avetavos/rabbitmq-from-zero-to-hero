@@ -12,9 +12,9 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## log ในตัว RabbitMQ
 
-บทเรียนก่อนหน้าวาง RabbitMQ กับ Kafka เป็นขั้วตรงข้าม — queue แบบ delete-on-ack เทียบกับ log ที่เก็บไว้ **RabbitMQ Streams** ทำให้เส้นแบ่งนั้นเบลอ: มันนำ **log แบบ append-only** สไตล์ Kafka เข้ามา *ใน* RabbitMQ เอง คุณจึงได้ replay และ fan-out สูง ๆ โดยไม่ต้องเพิ่มระบบตัวที่สอง
+บทเรียนก่อนหน้าวาง RabbitMQ กับ Kafka เป็นขั้วตรงข้าม — queue แบบ delete-on-ack เทียบกับ log ที่เก็บไว้ **RabbitMQ Streams** ทำให้เส้นแบ่งนั้นเบลอ: Streams นำ **log แบบ append-only** สไตล์ Kafka เข้ามา *ใน* RabbitMQ เอง คุณจึงได้ replay และ fan-out สูง ๆ โดยไม่ต้องเพิ่มระบบตัวที่สอง
 
-stream คือ queue type ตัวหนึ่ง (declare ด้วย `x-queue-type: stream`) แต่มันทำงานต่างจาก classic queue มาก:
+stream คือ queue type ตัวหนึ่ง (declare ด้วย `x-queue-type: stream`) แต่ทำงานต่างจาก classic queue มาก:
 
 - message ถูก **append เข้า log** และ **เก็บไว้** ไม่ถูกลบตอนอ่าน
 - การอ่านเป็นแบบ **non-destructive** — consume ไม่ลบอะไรทั้งนั้น
@@ -53,7 +53,7 @@ RabbitMQ Streams เพิ่ม **log แบบ append-only ที่ replay �
 
 export const quizStreams = [
   {
-    q: 'เกิดอะไรขึ้นกับ message ใน RabbitMQ stream เมื่อ consumer อ่านมัน?',
+    q: 'เกิดอะไรขึ้นกับ message ใน RabbitMQ stream เมื่อ consumer อ่าน?',
     options: [
       'ถูกลบทันที',
       'ถูกเก็บไว้ — การอ่านเป็นแบบ non-destructive',

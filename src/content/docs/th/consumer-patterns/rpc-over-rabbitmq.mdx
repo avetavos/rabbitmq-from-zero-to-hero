@@ -1,6 +1,6 @@
 ---
 title: 'RPC over RabbitMQ'
-description: 'request/reply บน messaging ด้วย correlation_id และ reply_to — มันทำงานอย่างไร และคำถามตรง ๆ ว่าคุณควรทำมันไหม'
+description: 'request/reply บน messaging ด้วย correlation_id และ reply_to — ทำงานอย่างไร และคำถามตรง ๆ ว่าคุณควรทำแบบนี้ไหม'
 sidebar:
   order: 4
 ---
@@ -15,8 +15,8 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 messaging เป็น fire-and-forget โดยธรรมชาติ — แต่บางครั้งคุณอยากได้ **คำตอบกลับ** RabbitMQ รองรับ pattern request/reply (RPC) ด้วย message property สองตัวที่คุณเจอมาแล้ว:
 
-- **`reply_to`** — client สร้าง **callback queue** แล้วใส่ชื่อมันตรงนี้ บอก server ว่า "ส่งคำตอบไปที่ queue นี้"
-- **`correlation_id`** — id ที่ไม่ซ้ำที่ client แนบกับแต่ละ request และคาดว่าจะได้ echo กลับมา เพื่อจับคู่ reply กับ request ที่ทำให้เกิดมัน (reply อาจมาไม่เรียงลำดับ)
+- **`reply_to`** — client สร้าง **callback queue** แล้วใส่ชื่อ queue นั้นตรงนี้ บอก server ว่า "ส่งคำตอบไปที่ queue นี้"
+- **`correlation_id`** — id ที่ไม่ซ้ำที่ client แนบกับแต่ละ request และคาดว่าจะได้ echo กลับมา เพื่อจับคู่ reply กับ request ต้นทาง (reply อาจมาไม่เรียงลำดับ)
 
 <Mermaid title="RPC round-trip ที่จับคู่ด้วย correlation_id" code={rpcDiagram} />
 
@@ -120,10 +120,10 @@ export const rpcDiagram = `sequenceDiagram
 
 ถามตัวเองตรง ๆ ก่อนจะหยิบ RPC-over-RabbitMQ มาใช้ คุณกำลัง **สร้าง synchronous call ขึ้นมาใหม่บน async infrastructure** — พร้อม callback queue, การจัดการ correlation และ timeout handling ของตัวเอง — เพื่อให้ได้สิ่งที่ HTTP หรือ gRPC call ธรรมดาให้ฟรี ๆ สำหรับ request/reply ส่วนใหญ่ direct call ง่ายกว่า debug ง่ายกว่า และ latency ต่ำกว่า
 
-RPC-over-messaging คุ้มเมื่อคุณอยากได้สิ่งที่ broker เพิ่มให้จริง ๆ: **load-balance request ข้าม pool ของ worker** (RPC server หลายตัวแข่งกันบน `rpc_queue`), **location transparency** (client ไม่รู้และไม่สนว่า worker ตัวไหนตอบ), หรือ **buffering** request ตอน worker ยุ่งชั่วครู่ ถ้าคุณไม่ต้องการสิ่งเหล่านี้ ก็อย่าสร้างมัน
+RPC-over-messaging คุ้มเมื่อคุณอยากได้สิ่งที่ broker เพิ่มให้จริง ๆ: **load-balance request ข้าม pool ของ worker** (RPC server หลายตัวแข่งกันบน `rpc_queue`), **location transparency** (client ไม่รู้และไม่สนว่า worker ตัวไหนตอบ), หรือ **buffering** request ตอน worker ยุ่งชั่วครู่ ถ้าคุณไม่ต้องการสิ่งเหล่านี้ ก็อย่าสร้างขึ้นมา
 
 <Callout title="The one-line takeaway">
-RPC over RabbitMQ ใช้ `reply_to` (ส่งคำตอบไปที่ไหน) และ `correlation_id` (จับคู่คำตอบกับ request) เพื่อจำลอง request/reply บน async infra มันทำงานได้ และให้ load-balancing กับ location transparency ข้าม worker pool — แต่คุณกำลัง re-implement สิ่งที่ HTTP/gRPC ให้ฟรี ดังนั้นเลือก direct synchronous call ก่อน เว้นแต่คุณต้องการ fan-out และ buffering ของ broker จริง ๆ
+RPC over RabbitMQ ใช้ `reply_to` (ส่งคำตอบไปที่ไหน) และ `correlation_id` (จับคู่คำตอบกับ request) เพื่อจำลอง request/reply บน async infra ทำงานได้ และให้ load-balancing กับ location transparency ข้าม worker pool — แต่คุณกำลัง re-implement สิ่งที่ HTTP/gRPC ให้ฟรี ดังนั้นเลือก direct synchronous call ก่อน เว้นแต่คุณต้องการ fan-out และ buffering ของ broker จริง ๆ
 </Callout>
 
 export const quizRpc = [
@@ -131,7 +131,7 @@ export const quizRpc = [
     q: 'บทบาทของ correlation_id ใน RPC over RabbitMQ คืออะไร?',
     options: [
       'บีบอัด request',
-      'ให้ client จับคู่ reply กลับไปยัง request ที่ทำให้เกิดมัน',
+      'ให้ client จับคู่ reply กลับไปยัง request ต้นทาง',
       'ตั้งชื่อ reply queue',
       'ตั้ง TTL ของ message',
     ],
@@ -150,7 +150,7 @@ export const quizRpc = [
   {
     q: 'เมื่อไรที่ RPC over RabbitMQ คุ้มจริงแทน direct HTTP/gRPC call?',
     options: [
-      'เสมอ — มันเร็วกว่า HTTP',
+      'เสมอ — เร็วกว่า HTTP',
       'เมื่อคุณอยาก load-balance request ข้าม pool ของ worker พร้อม location transparency และ buffering',
       'เมื่อ payload เป็น JSON',
       'เมื่อคุณมี server แค่ตัวเดียว',

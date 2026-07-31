@@ -32,11 +32,11 @@ export const shapeDiagram = `flowchart LR
 
 ## heartbeat ทำให้ connection ซื่อสัตย์
 
-connection อาจดูมีชีวิตในระดับ TCP ทั้งที่ปลายทางหายไปแล้ว (node ล่ม, network drop เงียบ ๆ) **heartbeat** คือ frame ที่ทั้งสองฝั่งส่งหากันเป็นระยะ ถ้าพลาดไปหลายครั้ง connection จะถือว่าตายและถูกปิด ทำให้ client ตรวจจับ broker ที่พังได้ในไม่กี่วินาที แทนที่จะรอ TCP timeout ที่อาจใช้เวลาหลายนาที เปิด heartbeat default ไว้ — ปิดมันคือที่มาของ connection "ซอมบี้"
+connection อาจดูมีชีวิตในระดับ TCP ทั้งที่ปลายทางหายไปแล้ว (node ล่ม, network drop เงียบ ๆ) **heartbeat** คือ frame ที่ทั้งสองฝั่งส่งหากันเป็นระยะ ถ้าพลาดไปหลายครั้ง connection จะถือว่าตายและถูกปิด ทำให้ client ตรวจจับ broker ที่พังได้ในไม่กี่วินาที แทนที่จะรอ TCP timeout ที่อาจใช้เวลาหลายนาที เปิด heartbeat default ไว้ — การปิด heartbeat คือที่มาของ connection "ซอมบี้"
 
 ## automatic recovery
 
-network สะดุดได้เสมอ client ที่ดีจะไม่ crash เมื่อ connection หลุด — มันจะ **reconnect** แล้ว re-declare topology (queue, exchange, binding) และตั้ง consumer ขึ้นใหม่ client ส่วนใหญ่มีความสามารถนี้ แต่คุณต้องออกแบบเผื่อไว้: message ที่ redeliver อาจมาถึงหลัง recovery ดังนั้น consumer ยังต้อง idempotent
+network สะดุดได้เสมอ client ที่ดีจะไม่ crash เมื่อ connection หลุด — จะ **reconnect** แล้ว re-declare topology (queue, exchange, binding) และตั้ง consumer ขึ้นใหม่ client ส่วนใหญ่มีความสามารถนี้ แต่คุณต้องออกแบบเผื่อไว้: message ที่ redeliver อาจมาถึงหลัง recovery ดังนั้น consumer ยังต้อง idempotent
 
 <Tabs syncKey="lang">
   <TabItem label="Node">
@@ -143,7 +143,7 @@ export const quizConn = [
       'เป็นข้อบังคับของ AMQP',
       'channel error จะปิดทั้ง channel ดังนั้นการแยก role ช่วยจำกัด blast radius',
       'channel ทำได้อย่างเดียวระหว่าง publish หรือ consume',
-      'มันเพิ่ม throughput เป็นสองเท่าอัตโนมัติ',
+      'เพิ่ม throughput เป็นสองเท่าอัตโนมัติ',
     ],
     answer: 1,
   },

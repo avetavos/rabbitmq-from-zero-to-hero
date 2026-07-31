@@ -13,19 +13,19 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## ทุกอย่างพร้อมกัน
 
-บทเรียนเรื่อง reliability แต่ละบทให้ safety net มาทีละอย่าง consumer ระดับ production ต้องการทั้งหมดนั้นทำงานร่วมกัน บทสรุปนี้ประกอบมันเข้าเป็นดีไซน์เดียวที่คุณปรับใช้ได้
+บทเรียนเรื่อง reliability แต่ละบทให้ safety net มาทีละอย่าง consumer ระดับ production ต้องการทั้งหมดนั้นทำงานร่วมกัน บทสรุปนี้ประกอบทั้งหมดเข้าเป็นดีไซน์เดียวที่คุณปรับใช้ได้
 
-## Checklist
+## เช็กลิสต์
 
 consumer ที่เชื่อถือได้บน production มีคุณสมบัติเหล่านี้:
 
 1. **durable queue + persistent messages** — เพื่อไม่ให้ broker restart ทำให้งานหาย
 2. **manual acknowledgement** — ack *หลัง* งานสำเร็จเท่านั้น เพื่อให้ crash กลางทาง redeliver
 3. **prefetch ที่เหมาะสม** — `prefetch` ที่มีขอบเขต (สัก 10–50) เพื่อไม่ให้ consumer ตัวเดียวถูกยัด message ที่ยังไม่ ack เป็นพัน
-4. **idempotent processing** — เพราะ delivery เป็นแบบ at-least-once message เดิมมาถึงได้สองครั้ง ทำให้การจัดการมันสองครั้งไม่มีผลเสีย (dedupe ด้วย message id)
+4. **idempotent processing** — เพราะ delivery เป็นแบบ at-least-once message เดิมมาถึงได้สองครั้ง ทำให้ประมวลผลซ้ำสองครั้งแล้วไม่มีผลเสีย (dedupe ด้วย message id)
 5. **retry with backoff แล้วค่อย park** — เมื่อล้มเหลว ให้ `nack` โดยไม่ requeue ทันที; route ผ่าน retry queue แบบ TTL + dead-letter; หลัง N ครั้ง ส่งไป **parking** (dead) queue ให้คนดู
 6. **connection recovery** — reconnect อัตโนมัติเมื่อ connection ไป broker หลุด และ re-declare topology
-7. **graceful shutdown** — เมื่อได้ SIGTERM ให้หยุดรับ delivery ใหม่, ทำงาน in-flight ให้เสร็จ (และ ack มัน) *แล้วค่อย* close channel และ connection
+7. **graceful shutdown** — เมื่อได้ SIGTERM ให้หยุดรับ delivery ใหม่, ทำงาน in-flight ให้เสร็จ (และ ack ให้เรียบร้อย) *แล้วค่อย* close channel และ connection
 8. **observability** — log และปล่อย metric ของ message ที่ processed, retried และ parked เพื่อให้เห็น failure
 
 ## flow พร้อม net ครบทุกชั้น
@@ -149,7 +149,7 @@ export const resilientDiagram = `flowchart TB
 
 ## นิสัยที่สำคัญที่สุด
 
-ถ้าคุณจำอะไรได้แค่สามอย่างจากทั้งคอร์สนี้ ให้เป็นสามอย่างนี้: **ack หลังสำเร็จ ไม่ใช่ก่อน** (มันคือความต่างระหว่างงานหายกับไม่หาย); **ทำ processing ให้ idempotent** (เพราะ at-least-once การันตีว่ามี duplicate); และ **อย่า requeue poison message ใน loop แน่น ๆ** (ใช้ TTL + dead-letter retry และ parking queue) ที่เหลือคือรายละเอียดที่ต่อยอดจากสามข้อนี้
+ถ้าคุณจำอะไรได้แค่สามอย่างจากทั้งคอร์สนี้ ให้เป็นสามอย่างนี้: **ack หลังสำเร็จ ไม่ใช่ก่อน** (นี่คือความต่างระหว่างงานหายกับไม่หาย); **ทำ processing ให้ idempotent** (เพราะ at-least-once การันตีว่ามี duplicate); และ **อย่า requeue poison message ใน loop แน่น ๆ** (ใช้ TTL + dead-letter retry และ parking queue) ที่เหลือคือรายละเอียดที่ต่อยอดจากสามข้อนี้
 
 <Callout title="สรุปหนึ่งบรรทัด">
 resilient consumer รวมทุกบทเรียนเรื่อง reliability เข้าด้วยกัน: durable queue + persistent messages, **manual ack หลังสำเร็จ**, prefetch ที่มีขอบเขต, processing แบบ **idempotent** (duplicate เกิดแน่นอน), retry ผ่าน TTL + dead-letter พร้อม parking queue หลัง N ครั้ง, connection recovery อัตโนมัติ และ **graceful shutdown** ที่ทำงาน in-flight ให้เสร็จก่อน close ack-หลังสำเร็จ, idempotency และไม่มี poison loop แน่น ๆ คือสามนิสัยที่มีน้ำหนักมากที่สุด
@@ -179,10 +179,10 @@ export const quizResilient = [
   {
     q: 'วิธีที่ปลอดภัยในการจัดการ message ที่ล้มเหลวซ้ำ ๆ คืออะไร?',
     options: [
-      'requeue มันทันทีใน loop แน่น ๆ',
-      'ทิ้งมันเงียบ ๆ',
-      'retry ด้วย delay แบบ TTL + dead-letter แล้ว park มันหลัง N ครั้งให้คนดู',
-      'ack มันแล้วแกล้งว่าสำเร็จ',
+      'requeue ทันทีใน loop แน่น ๆ',
+      'ทิ้งเงียบ ๆ',
+      'retry ด้วย delay แบบ TTL + dead-letter แล้ว park ไว้หลัง N ครั้งให้คนดู',
+      'ack แล้วแกล้งว่าสำเร็จ',
     ],
     answer: 2,
   },

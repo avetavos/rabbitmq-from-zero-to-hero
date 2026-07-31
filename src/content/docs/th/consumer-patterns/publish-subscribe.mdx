@@ -1,6 +1,6 @@
 ---
 title: 'Publish/Subscribe'
-description: 'broadcast หนึ่ง event ไปยัง consumer หลายตัวที่เป็นอิสระ — แต่ละตัวมี queue ของตัวเอง — และมันต่างจาก work queue ที่แชร์ queue กันอย่างไร'
+description: 'broadcast หนึ่ง event ไปยัง consumer หลายตัวที่เป็นอิสระ — แต่ละตัวมี queue ของตัวเอง — และต่างจาก work queue ที่แชร์ queue กันอย่างไร'
 sidebar:
   order: 3
 ---
@@ -95,11 +95,11 @@ setup ที่สะอาดและพบบ่อย: แต่ละ subsc
   </TabItem>
 </Tabs>
 
-producer ไม่เปลี่ยนเลยเวลาคุณเพิ่ม subscriber — มันแค่ publish ไปที่ exchange `orders` อยากได้ reaction ใหม่สำหรับ fraud detection? เปิด service ที่ bind queue ของตัวเอง นี่คือผลตอบแทนด้าน decoupling จากโมดูล foundations ในรูปธรรม
+producer ไม่เปลี่ยนเลยเวลาคุณเพิ่ม subscriber — ยังคง publish ไปที่ exchange `orders` อยากได้ reaction ใหม่สำหรับ fraud detection? เปิด service ที่ bind queue ของตัวเอง นี่คือผลตอบแทนด้าน decoupling จากโมดูล foundations ในรูปธรรม
 
 ## subscriber แบบ durable เทียบกับแบบ ephemeral
 
-queue แบบ exclusive auto-delete จะหายไปเมื่อ subscriber disconnect — เหมาะกับ dashboard สด ๆ ที่สนใจ event เฉพาะตอนกำลังดูอยู่ ส่วน subscriber ที่ต้อง **ไม่พลาด event ตอนที่ตัวเองล่มชั่วครู่** (เช่น email service) ให้ใช้ queue แบบ **named, durable** แทน เพื่อให้ message สะสมรอไว้จนกว่ามันจะ reconnect
+queue แบบ exclusive auto-delete จะหายไปเมื่อ subscriber disconnect — เหมาะกับ dashboard สด ๆ ที่สนใจ event เฉพาะตอนกำลังดูอยู่ ส่วน subscriber ที่ต้อง **ไม่พลาด event ตอนที่ตัวเองล่มชั่วครู่** (เช่น email service) ให้ใช้ queue แบบ **named, durable** แทน เพื่อให้ message สะสมรอไว้จนกว่าจะ reconnect
 
 <Callout title="The one-line takeaway">
 publish/subscribe broadcast แต่ละ event ไปยัง consumer หลายตัวที่เป็นอิสระ โดยให้ **แต่ละ subscriber มี queue ของตัวเอง** ที่ bind กับ fanout (หรือ topic) exchange producer publish ครั้งเดียวและไม่เปลี่ยนเลยเมื่อ subscriber เข้า-ออก ใช้ exclusive auto-delete queue สำหรับ watcher ชั่วคราว, durable named queue สำหรับ subscriber ที่ต้องไม่พลาด event ตอน restart
@@ -137,10 +137,10 @@ export const quizPs = [
     answer: 1,
   },
   {
-    q: 'subscriber ต้องไม่พลาด event ตอนที่มัน restart สั้น ๆ ควรใช้อะไร?',
+    q: 'subscriber ต้องไม่พลาด event ตอนที่ตัวเอง restart สั้น ๆ ควรใช้อะไร?',
     options: [
       'queue แบบ exclusive auto-delete',
-      'queue แบบ named, durable เพื่อให้ message สะสมไว้ตอนมันล่ม',
+      'queue แบบ named, durable เพื่อให้ message สะสมไว้ตอน subscriber ล่ม',
       'auto-ack โดยไม่มี queue',
       'queue ที่แชร์กับ subscriber ตัวอื่น',
     ],

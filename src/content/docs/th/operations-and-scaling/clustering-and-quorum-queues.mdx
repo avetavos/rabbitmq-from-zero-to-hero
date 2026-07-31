@@ -12,9 +12,9 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## cluster แชร์ metadata ไม่ใช่ queue
 
-**cluster** ของ RabbitMQ คือ node หลายตัวที่ทำงานเป็น broker เชิงตรรกะตัวเดียว พวกมันแชร์ **metadata** — exchange, binding, user, vhost และรายชื่อ queue ที่มีอยู่ — ดังนั้น client ต่อเข้า node ไหนก็เห็น topology เดียวกัน
+**cluster** ของ RabbitMQ คือ node หลายตัวที่ทำงานเป็น broker เชิงตรรกะตัวเดียว ทุก node แชร์ **metadata** — exchange, binding, user, vhost และรายชื่อ queue ที่มีอยู่ — ดังนั้น client ต่อเข้า node ไหนก็เห็น topology เดียวกัน
 
-แต่มีจุดที่คนมักตกใจ: **classic queue อยู่บน node ตัวเดียวที่มันถูก declare เท่านั้น** node อื่นรู้ว่า queue นี้มีอยู่ แต่ไม่ได้ถือ message ของมันเลย ถ้า client ต่อเข้าที่อื่น operation ของมันจะถูก forward ไปยัง node ที่เป็นเจ้าของ queue
+แต่มีจุดที่คนมักตกใจ: **classic queue อยู่บน node ตัวเดียวที่ถูก declare เท่านั้น** node อื่นรู้ว่า queue นี้มีอยู่ แต่ไม่ได้ถือ message ของตัวเองเลย ถ้า client ต่อเข้าที่อื่น operation ของตัวเองจะถูก forward ไปยัง node ที่เป็นเจ้าของ queue
 
 <Mermaid title="classic queue อยู่บน node เดียว — เป็น single point of failure" code={classicDiagram} />
 
@@ -28,11 +28,11 @@ export const classicDiagram = `flowchart TB
 
 ## คำตอบเดิม: mirrored queue (ถูกถอดออกใน RabbitMQ 4.0)
 
-ในอดีต วิธีแก้คือ **classic mirrored queue** — replicate เนื้อหาของ queue ไปเป็น mirror บน node อื่น mirroring ใช้งานได้ แต่ปวดหัวเรื่อง operation: sync queue ใหญ่ ๆ ช้า, failover semantics ยุ่งยาก และมี edge case ที่ทำ message หายหรือซ้ำได้ตอน partition classic queue mirroring ถูก deprecated ตั้งแต่ RabbitMQ 3.x และ **ถูกถอดออกทั้งหมดใน RabbitMQ 4.0** — quorum queue คือตัวแทนของมัน ดังนั้นบน broker เวอร์ชันปัจจุบันคุณใช้ mirrored queue ไม่ได้แล้ว
+ในอดีต วิธีแก้คือ **classic mirrored queue** — replicate เนื้อหาของ queue ไปเป็น mirror บน node อื่น mirroring ใช้งานได้ แต่ปวดหัวเรื่อง operation: sync queue ใหญ่ ๆ ช้า, failover semantics ยุ่งยาก และมี edge case ที่ทำ message หายหรือซ้ำได้ตอน partition classic queue mirroring ถูก deprecated ตั้งแต่ RabbitMQ 3.x และ **ถูกถอดออกทั้งหมดใน RabbitMQ 4.0** — quorum queue คือตัวแทน ดังนั้นบน broker เวอร์ชันปัจจุบันคุณใช้ mirrored queue ไม่ได้แล้ว
 
 ## คำตอบยุคใหม่: quorum queue
 
-**quorum queue** คือ replicated queue ที่สร้างบน consensus algorithm ชื่อ **Raft** quorum queue มี leader และ follower กระจายอยู่บน node ต่าง ๆ ใน cluster โดย message จะถูก confirm ก็ต่อเมื่อ replica เกิน **majority (quorum)** เก็บมันลง disk แบบ durable แล้ว
+**quorum queue** คือ replicated queue ที่สร้างบน consensus algorithm ชื่อ **Raft** quorum queue มี leader และ follower กระจายอยู่บน node ต่าง ๆ ใน cluster โดย message จะถูก confirm ก็ต่อเมื่อ replica เกิน **majority (quorum)** เขียนลง disk แบบ durable แล้ว
 
 <Mermaid title="quorum queue ที่ replicate ข้าม 3 node" code={quorumDiagram} />
 
@@ -58,18 +58,18 @@ replication ไม่ฟรี และ quorum queue เลือกอย่�
 | **Memory model** | เก็บใน memory ได้ | durable บน disk เสมอ |
 | **เหมาะกับ** | transient, throughput สูง | message สำคัญที่หายไม่ได้ |
 
-quorum queue เป็น durable เสมอ และต้องการจำนวน replica เป็นเลขคี่ (ปกติ 3 หรือ 5) เพื่อ break ties ใช้มันกับ message ที่สำคัญ ส่วน classic queue ยังเหมาะกับงาน transient ที่ throughput สูงและยอมให้ message หายได้
+quorum queue เป็น durable เสมอ และต้องการจำนวน replica เป็นเลขคี่ (ปกติ 3 หรือ 5) เพื่อ break ties ใช้ quorum queue กับ message ที่สำคัญ ส่วน classic queue ยังเหมาะกับงาน transient ที่ throughput สูงและยอมให้ message หายได้
 
 <Callout title="สรุปสั้น ๆ">
-cluster แชร์ metadata แต่ **classic queue อยู่บน node เดียว** — เสีย node นั้นก็เสีย queue ไปด้วย **quorum queue** แก้ปัญหานี้ด้วย replication บน Raft: message จะ confirm ก็ต่อเมื่อ replica เกิน majority เก็บแล้ว ทำให้ queue รอดเมื่อ node ส่วนน้อยล่มโดยไม่มี message หาย มันแลกมาด้วย throughput และ latency ที่แย่ลง จึงควรใช้กับ message ที่หายไม่ได้ ส่วน **classic mirrored queue เก่าถูกถอดออกใน RabbitMQ 4.0** — quorum queue คือตัวแทนของมัน
+cluster แชร์ metadata แต่ **classic queue อยู่บน node เดียว** — เสีย node นั้นก็เสีย queue ไปด้วย **quorum queue** แก้ปัญหานี้ด้วย replication บน Raft: message จะ confirm ก็ต่อเมื่อ replica เกิน majority เก็บแล้ว ทำให้ queue รอดเมื่อ node ส่วนน้อยล่มโดยไม่มี message หาย แต่แลกมาด้วย throughput และ latency ที่แย่ลง จึงควรใช้กับ message ที่หายไม่ได้ ส่วน **classic mirrored queue เก่าถูกถอดออกใน RabbitMQ 4.0** — quorum queue คือตัวแทน
 </Callout>
 
 export const quizCluster = [
   {
-    q: 'ใน cluster ของ RabbitMQ, classic queue เก็บ message ของมันไว้ที่ไหนจริง ๆ?',
+    q: 'ใน cluster ของ RabbitMQ, classic queue เก็บ message ของตัวเองไว้ที่ไหนจริง ๆ?',
     options: [
       'กระจายเท่า ๆ กันทุก node',
-      'บน node ตัวเดียวที่มันถูก declare เท่านั้น',
+      'บน node ตัวเดียวที่ถูก declare เท่านั้น',
       'บน client',
       'ในฐานข้อมูลกลางที่แชร์กัน',
     ],
@@ -98,10 +98,10 @@ export const quizCluster = [
   {
     q: 'trade-off หลักของ quorum queue เทียบกับ classic queue คืออะไร?',
     options: [
-      'มันรอดจาก node failure ไม่ได้',
+      'รอดจาก node failure ไม่ได้',
       'throughput ต่ำกว่าและ latency สูงกว่า แลกกับ replication และ message ไม่หาย',
-      'มันเป็น durable ไม่ได้',
-      'มันใช้ได้กับ consumer ตัวเดียวเท่านั้น',
+      'เป็น durable ไม่ได้',
+      'ใช้ได้กับ consumer ตัวเดียวเท่านั้น',
     ],
     answer: 1,
   },

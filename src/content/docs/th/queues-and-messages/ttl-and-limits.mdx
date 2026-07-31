@@ -22,9 +22,9 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 - **ต่อ queue** (`x-message-ttl`) — ทุก message ใน queue หมดอายุหลัง N ms
 - **ต่อ message** (property `expiration`) — message ตัวนี้โดยเฉพาะหมดอายุหลัง N ms
 
-เมื่อ message หมดอายุ มันถูกลบออกจาก queue ที่สำคัญคือ ถ้า queue มี dead-letter exchange message ที่หมดอายุจะถูก **dead-letter** แทนที่จะถูกทิ้งเงียบ ๆ — ซึ่งเป็นพื้นฐานทั้งหมดของทริค delayed-retry ด้านล่าง
+เมื่อ message หมดอายุ RabbitMQ จะลบออกจาก queue ที่สำคัญคือ ถ้า queue มี dead-letter exchange message ที่หมดอายุจะถูก **dead-letter** แทนที่จะถูกทิ้งเงียบ ๆ — ที่เป็นพื้นฐานทั้งหมดของทริค delayed-retry ด้านล่าง
 
-**Queue TTL** (`x-expires`) ต่างออกไป: มันลบ *ทั้ง queue* หลังจากมันไม่ถูกใช้ (ไม่มี consumer, ไม่มี get) เป็นเวลา N ms มีประโยชน์สำหรับเก็บกวาด queue ชั่วคราว
+**Queue TTL** (`x-expires`) ต่างออกไป: ตัวนี้ลบ *ทั้ง queue* หลังจาก queue ไม่ถูกใช้ (ไม่มี consumer, ไม่มี get) เป็นเวลา N ms มีประโยชน์สำหรับเก็บกวาด queue ชั่วคราว
 
 ## length limit — จำกัด backlog
 
@@ -77,7 +77,7 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 
 ## ทริค: TTL + DLX = delayed retry
 
-นี่คือเหตุผลที่ TTL สำคัญเกินกว่าการเก็บกวาด ใส่ TTL บน queue ที่ **ไม่มี consumer** แล้วชี้ dead-letter exchange ของมันกลับไปที่ main queue ของคุณ message ที่ส่งไปที่นั่นจะนั่งรอตาม TTL หมดอายุ แล้วถูก dead-letter *กลับเข้า flow หลัก* — เป็น **delay** โดยไม่ต้องมี scheduler
+นี่คือเหตุผลที่ TTL สำคัญเกินกว่าการเก็บกวาด ใส่ TTL บน queue ที่ **ไม่มี consumer** แล้วชี้ dead-letter exchange ของตัวเองกลับไปที่ main queue ของคุณ message ที่ส่งไปที่นั่นจะนั่งรอตาม TTL หมดอายุ แล้วถูก dead-letter *กลับเข้า flow หลัก* — เป็น **delay** โดยไม่ต้องมี scheduler
 
 <Mermaid title="retry queue: TTL หมดอายุแล้ว dead-letter กลับไปที่ main queue" code={retryDiagram} />
 
@@ -86,7 +86,7 @@ export const retryDiagram = `flowchart LR
   retry -->|"TTL หมดอายุ → dead-letter"| main
   main --> worker["consumer"]`;
 
-นี่คือวิธีมาตรฐานของ RabbitMQ ในการทำ retry-with-backoff และโมดูล Reliability กับ Consumer Patterns ต่อยอดจากมันโดยตรง
+นี่คือวิธีมาตรฐานของ RabbitMQ ในการทำ retry-with-backoff และโมดูล Reliability กับ Consumer Patterns ต่อยอดจากทริคนี้โดยตรง
 
 <Callout title="สรุปหนึ่งบรรทัด">
 TTL และ length limit หยุดไม่ให้ queue โตจนล้ม broker Message TTL ทำให้ message แต่ละตัวหมดอายุ; `x-max-length` จำกัด backlog โดย `x-overflow` เลือกว่าจะทิ้งตัวเก่าสุด (`drop-head`) หรือ reject publish ใหม่ (`reject-publish`) และ TTL ไม่ได้มีไว้แค่เก็บกวาด: TTL queue ที่มี dead-letter exchange ชี้กลับไปที่ main queue คือวิธีสร้าง delayed retry โดยไม่ต้องมี scheduler
@@ -96,10 +96,10 @@ export const quizTtl = [
   {
     q: 'เกิดอะไรกับ message เมื่อ TTL หมดอายุ ถ้า queue มี dead-letter exchange?',
     options: [
-      'มันถูกลบเงียบ ๆ',
-      'มันถูก dead-letter ไปยัง exchange ที่ตั้งไว้ แทนที่จะถูกทิ้ง',
-      'มันถูกส่งกลับไปยัง producer',
-      'มันถูก retry ทันทีในที่เดิม',
+      'ถูกลบเงียบ ๆ',
+      'ถูก dead-letter ไปยัง exchange ที่ตั้งไว้ แทนที่จะถูกทิ้ง',
+      'ถูกส่งกลับไปยัง producer',
+      'ถูก retry ทันทีในที่เดิม',
     ],
     answer: 1,
   },
@@ -127,7 +127,7 @@ export const quizTtl = [
     q: 'คุณสร้าง delayed retry-with-backoff ใน RabbitMQ โดยใช้ TTL อย่างไร?',
     options: [
       'ตั้งค่า prefetch สูง ๆ',
-      'ใส่ message ใน TTL queue ที่ไม่มี consumer ซึ่ง dead-letter exchange ของมัน route กลับไปที่ main queue หลังหมด TTL',
+      'ใส่ message ใน TTL queue ที่ไม่มี consumer ซึ่ง dead-letter exchange ของตัวเอง route กลับไปที่ main queue หลังหมด TTL',
       'ใช้ auto-ack',
       'เพิ่ม x-max-length',
     ],

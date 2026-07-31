@@ -20,11 +20,11 @@ import ProgressTracker from '../../../../components/ProgressTracker.tsx';
 | **At-least-once** | แต่ละ message ถูกส่ง 1 ครั้งขึ้นไป | **ซ้ำ** — message ซ้ำได้ |
 | **Exactly-once** | แต่ละ message ถูกส่งพอดี 1 ครั้ง | (ความฝัน) |
 
-ความจริงที่น่าอึดอัด: ในระบบ distributed ที่มี network และ crash **exactly-once *delivery* ทำไม่ได้** มันเป็น myth ดังนั้นทางเลือกจริง ๆ ในการออกแบบคือระหว่าง at-most-once กับ at-least-once — คุณกำลังเลือกว่าจะทน failure แบบไหนได้: message หาย หรือเห็นมันสองครั้ง
+ความจริงที่น่าอึดอัด: ในระบบ distributed ที่มี network และ crash **exactly-once *delivery* ทำไม่ได้** เป็น myth ดังนั้นทางเลือกจริง ๆ ในการออกแบบคือระหว่าง at-most-once กับ at-least-once — คุณกำลังเลือกว่าจะทน failure แบบไหนได้: message หาย หรือเห็น message ซ้ำสองครั้ง
 
 ## ทำไม "exactly-once" ถึงเป็น myth
 
-ลองนึกภาพจังหวะที่ consumer ทำงานเสร็จ มันต้องทำสองอย่าง: process message และ acknowledge มัน crash เกิดขึ้น *ระหว่าง* สองอย่างนั้นได้ และไม่มีทางทำให้ทั้งคู่เป็น atomic ข้าม network:
+ลองนึกภาพจังหวะที่ consumer ทำงานเสร็จ ตรงนั้นมีสองอย่างที่ต้องทำ: process message และ acknowledge crash เกิดขึ้น *ระหว่าง* สองอย่างนั้นได้ และไม่มีทางทำให้ทั้งคู่เป็น atomic ข้าม network:
 
 <Mermaid title="ช่องว่างที่เลี่ยงไม่ได้ที่ทำให้เกิด duplicate" code={dupDiagram} />
 
@@ -37,13 +37,13 @@ export const dupDiagram = `sequenceDiagram
   Note over Q: no ack arrived → redeliver
   Q->>C: deliver AGAIN (duplicate)`;
 
-ถ้า consumer crash *หลัง* ทำงานเสร็จแต่ *ก่อน* ack ถึง RabbitMQ จะ (อย่างถูกต้องและปลอดภัย) สมมติว่างานไม่เคยเกิดขึ้นและ redeliver งานรันสองครั้ง ไม่มีความฉลาดของ broker ใดลบช่องว่างนี้ได้ — process กับ ack มันไม่ใช่ขั้นตอน atomic เดียว
+ถ้า consumer crash *หลัง* ทำงานเสร็จแต่ *ก่อน* ack ถึง RabbitMQ จะ (อย่างถูกต้องและปลอดภัย) สมมติว่างานไม่เคยเกิดขึ้นและ redeliver งานรันสองครั้ง ไม่มีความฉลาดของ broker ใดลบช่องว่างนี้ได้ — process กับ ack ไม่ใช่ขั้นตอน atomic เดียว
 
 นั่นคือเหตุผลที่ at-least-once เป็น default ที่ซื่อสัตย์และปลอดภัย: RabbitMQ ยอม deliver สองครั้งดีกว่าเสี่ยงทำ message หาย เลือก at-most-once (auto-ack, ไม่มี persistence) เฉพาะตอนที่ message หายนาน ๆ ทีไม่สำคัญจริง ๆ — metrics, live dashboard, ephemeral event
 
 ## Effectively-once: at-least-once + idempotency
 
-ข่าวดี: จริง ๆ คุณไม่ต้องการ exactly-once *delivery* คุณต้องการ exactly-once **effect** และคุณได้มันด้วยการทำให้ **consumer idempotent** — process message เดิมสองครั้งให้ผลเหมือน process ครั้งเดียว
+ข่าวดี: จริง ๆ คุณไม่ต้องการ exactly-once *delivery* คุณต้องการ exactly-once **effect** และคุณได้สิ่งนั้นด้วยการทำให้ **consumer idempotent** — process message เดิมสองครั้งให้ผลเหมือน process ครั้งเดียว
 
 วิธี idempotent ที่ใช้ได้จริง:
 
@@ -51,7 +51,7 @@ export const dupDiagram = `sequenceDiagram
 - **operation ที่ idempotent โดยธรรมชาติ** "set status = shipped" รันซ้ำสองครั้งปลอดภัย ส่วน "เพิ่ม balance 10" ไม่ปลอดภัย เลือก set/upsert แทน increment ตรง ๆ เมื่อทำได้
 - **dedup ตอน write** ใช้ unique constraint ของ database บน business key เพื่อให้ duplicate insert fail แบบไม่มีอันตราย
 
-รวม at-least-once delivery ของ RabbitMQ กับ idempotent consumer แล้วคุณได้ **effectively-once processing** — message อาจมาถึงสองครั้ง แต่มัน *มีผล* แค่ครั้งเดียว นั่นคือเป้าที่ถูกต้องและทำได้จริง
+รวม at-least-once delivery ของ RabbitMQ กับ idempotent consumer แล้วคุณได้ **effectively-once processing** — message อาจมาถึงสองครั้ง แต่ *มีผล* แค่ครั้งเดียว นั่นคือเป้าที่ถูกต้องและทำได้จริง
 
 <Callout title="สรุปหนึ่งบรรทัด">
 exactly-once *delivery* เป็น myth — ช่องว่างระหว่างทำงานกับ ack ทำให้เกิด duplicate หลัง crash ได้เสมอ ดังนั้น RabbitMQ ให้ **at-least-once** และคุณทำ **consumer ให้ idempotent** (idempotency key, operation แบบ set/upsert, unique constraint) เพื่อให้ duplicate ไม่เป็นอันตราย at-least-once + idempotency = **effectively-once** ซึ่งคือสิ่งที่คุณต้องการจริง ๆ
@@ -59,7 +59,7 @@ exactly-once *delivery* เป็น myth — ช่องว่างระห�
 
 export const quizGuarantees = [
   {
-    q: 'RabbitMQ เลือก delivery guarantee แบบใดเป็น default และความเสี่ยงของมันคืออะไร?',
+    q: 'RabbitMQ เลือก delivery guarantee แบบใดเป็น default และความเสี่ยงของตัวเองคืออะไร?',
     options: [
       'At-most-once — เสี่ยง duplicate',
       'At-least-once — เสี่ยง duplicate',
