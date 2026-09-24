@@ -40,7 +40,7 @@ export const rpcDiagram = `sequenceDiagram
   <TabItem label="Node">
     ```js
     // Server
-    await channel.assertQueue('rpc_queue', { durable: false });
+    await channel.assertQueue('rpc_queue', { durable: true });
     await channel.prefetch(1);
     channel.consume('rpc_queue', (msg) => {
       const n = parseInt(msg.content.toString(), 10);
@@ -67,7 +67,7 @@ export const rpcDiagram = `sequenceDiagram
   <TabItem label="Python">
     ```python
     # Server
-    channel.queue_declare(queue="rpc_queue")
+    channel.queue_declare(queue="rpc_queue", durable=True)
     channel.basic_qos(prefetch_count=1)
     def on_request(ch, method, props, body):
         result = str(fib(int(body)))
@@ -92,7 +92,7 @@ export const rpcDiagram = `sequenceDiagram
   <TabItem label="Go">
     ```go
     // Server
-    ch.QueueDeclare("rpc_queue", false, false, false, false, nil)
+    ch.QueueDeclare("rpc_queue", true, false, false, false, nil)
     ch.Qos(1, 0, false)
     msgs, _ := ch.Consume("rpc_queue", "", false, false, false, false, nil)
     for d := range msgs {

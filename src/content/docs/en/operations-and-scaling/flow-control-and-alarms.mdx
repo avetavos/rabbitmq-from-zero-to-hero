@@ -1,6 +1,6 @@
 ---
 title: 'Flow Control & Alarms'
-description: 'What happens when producers outrun consumers — memory and disk alarms, per-connection flow control, lazy queues, and designing to avoid unbounded backlogs.'
+description: 'What happens when producers outrun consumers — memory and disk alarms, per-connection flow control, classic queue v2 storage, and designing to avoid unbounded backlogs.'
 sidebar:
   order: 5
 ---
@@ -33,9 +33,9 @@ This is **intentional backpressure**: rather than accept messages until it dies,
 
 Even before a global alarm, RabbitMQ applies **internal flow control** per connection: if a publisher sends faster than the broker can route and persist, the broker throttles that specific connection so it can't overwhelm the internal pipeline. In the management UI, such a connection shows the state **`flow`** — a normal, healthy signal that this publisher is being paced, not an error.
 
-## Lazy queues and large backlogs
+## Classic queue v2 and large backlogs
 
-By default, classic queues try to keep messages in memory for speed. A very deep queue (millions of messages) can therefore consume a lot of RAM and trip the memory alarm. **Lazy queues** (and the newer classic-queue v2 storage) instead keep messages on disk, trading a little latency for a much smaller memory footprint — the right choice when backlogs can grow large. Quorum queues are always disk-based and handle deep backlogs well.
+Older classic queues tried to keep messages mostly in memory for speed, so a very deep queue (millions of messages) could consume a lot of RAM and trip the memory alarm. RabbitMQ used to offer an opt-in **lazy queue** mode (`x-queue-mode: lazy`) to push messages to disk instead — but that setting is now ignored. Since RabbitMQ 3.12, **classic queue version 2 (CQv2)** is the default storage engine, and it already behaves the old lazy way automatically: most of a deep backlog sits on disk, with only a small in-memory buffer for messages about to be delivered. A modern classic queue handles a large backlog well with no opt-in required, and quorum queues are always disk-based and handle deep backlogs well too.
 
 ## Design so alarms stay rare
 
@@ -43,12 +43,12 @@ Alarms and flow control are safety nets, not a running mode. If they fire regula
 
 - **Scale consumers** so the ack rate matches the publish rate over time.
 - **Bound your queues** with a `max-length` or TTL so a runaway producer can't grow the queue without limit (drop or dead-letter the overflow instead).
-- **Use lazy or quorum queues** for workloads that can legitimately build deep backlogs.
+- **Classic queue v2 already handles this** — since RabbitMQ 3.12 there's no lazy mode to opt into; CQv2 is the default and keeps deep backlogs on disk automatically. Reach for **quorum queues** when you also need replication.
 - **Handle "connection blocked"** in producers — back off instead of hammering.
 - **Alert on queue depth trending up** so you scale consumers *before* the memory alarm fires.
 
 <Callout title="The one-line takeaway">
-When producers outrun consumers, RabbitMQ protects itself: **memory/disk alarms block publishers**, and **per-connection flow control** paces a too-fast publisher (the `flow` state). **Lazy/quorum queues** keep deep backlogs on disk instead of RAM. But these are safety nets — design so they stay rare by scaling consumers, **bounding queues** with max-length/TTL, and reacting to a rising queue depth before the alarm ever fires.
+When producers outrun consumers, RabbitMQ protects itself: **memory/disk alarms block publishers**, and **per-connection flow control** paces a too-fast publisher (the `flow` state). **Classic queue v2 (the modern default) and quorum queues** keep deep backlogs on disk instead of RAM. But these are safety nets — design so they stay rare by scaling consumers, **bounding queues** with max-length/TTL, and reacting to a rising queue depth before the alarm ever fires.
 </Callout>
 
 export const quizFlow = [
@@ -73,10 +73,10 @@ export const quizFlow = [
     answer: 1,
   },
   {
-    q: 'What problem do lazy queues (and classic v2 / quorum storage) address?',
+    q: 'What keeps a modern classic queue\'s deep backlog off the broker\'s RAM?',
     options: [
       'Slow serialization',
-      'Deep backlogs consuming too much RAM — they keep messages on disk instead',
+      'Classic queue version 2 (CQv2), the default since RabbitMQ 3.12, keeps most of a deep backlog on disk automatically',
       'Missing acknowledgements',
       'Routing key mismatches',
     ],

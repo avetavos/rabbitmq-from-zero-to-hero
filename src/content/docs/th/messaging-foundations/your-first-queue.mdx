@@ -36,7 +36,7 @@ producer connect, เปิด channel, ประกาศ queue (เพื่�
     const channel = await conn.createChannel();
 
     const queue = 'hello';
-    await channel.assertQueue(queue, { durable: false });
+    await channel.assertQueue(queue, { durable: true });
 
     channel.sendToQueue(queue, Buffer.from('Hello, RabbitMQ!'));
     console.log('sent: Hello, RabbitMQ!');
@@ -52,7 +52,7 @@ producer connect, เปิด channel, ประกาศ queue (เพื่�
     conn = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
     channel = conn.channel()
 
-    channel.queue_declare(queue="hello", durable=False)
+    channel.queue_declare(queue="hello", durable=True)
 
     channel.basic_publish(exchange="", routing_key="hello", body="Hello, RabbitMQ!")
     print("sent: Hello, RabbitMQ!")
@@ -67,7 +67,7 @@ producer connect, เปิด channel, ประกาศ queue (เพื่�
     ch, _ := conn.Channel()
     defer ch.Close()
 
-    q, _ := ch.QueueDeclare("hello", false, false, false, false, nil)
+    q, _ := ch.QueueDeclare("hello", true, false, false, false, nil)
 
     ch.PublishWithContext(ctx, "", q.Name, false, false, amqp.Publishing{
         Body: []byte("Hello, RabbitMQ!"),
@@ -92,7 +92,7 @@ consumer connect, ประกาศ queue เดียวกัน (การ�
     const channel = await conn.createChannel();
 
     const queue = 'hello';
-    await channel.assertQueue(queue, { durable: false });
+    await channel.assertQueue(queue, { durable: true });
 
     console.log('waiting for messages...');
     channel.consume(queue, (msg) => {
@@ -109,7 +109,7 @@ consumer connect, ประกาศ queue เดียวกัน (การ�
 
     conn = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
     channel = conn.channel()
-    channel.queue_declare(queue="hello", durable=False)
+    channel.queue_declare(queue="hello", durable=True)
 
     def on_message(ch, method, properties, body):
         print("received:", body.decode())
@@ -127,7 +127,7 @@ consumer connect, ประกาศ queue เดียวกัน (การ�
     ch, _ := conn.Channel()
     defer ch.Close()
 
-    q, _ := ch.QueueDeclare("hello", false, false, false, false, nil)
+    q, _ := ch.QueueDeclare("hello", true, false, false, false, nil)
     msgs, _ := ch.Consume(q.Name, "", false, false, false, false, nil)
 
     log.Println("waiting for messages...")

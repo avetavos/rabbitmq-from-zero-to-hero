@@ -17,7 +17,7 @@ RabbitMQ มาพร้อม **management plugin** ที่ให้ web UI �
 
 ```bash
 rabbitmq-plugins enable rabbitmq_management
-# UI อยู่ที่ http://localhost:15672  (default guest/guest, localhost เท่านั้น)
+# UI at http://localhost:15672  (default guest/guest, localhost only)
 ```
 
 UI เหมาะกับการดูปัญหาด้วยตา แต่สำหรับ monitoring จริงคุณต้องใช้ **HTTP API** (สำหรับ script และ health check) และ **Prometheus plugin** (`rabbitmq_prometheus`) ป้อนเข้า **Grafana** dashboard และ alert
