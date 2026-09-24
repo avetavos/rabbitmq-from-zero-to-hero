@@ -1,28 +1,28 @@
 {
-  "id": "/websocket/",
-  "name": "WebSocket Design — From Zero to Hero",
-  "short_name": "WebSocket Design",
-  "start_url": "/websocket/en/",
-  "scope": "/websocket/",
+  "id": "/rabbitmq/",
+  "name": "RabbitMQ \u2014 From Zero to Hero",
+  "short_name": "RabbitMQ \u2014 From Zero to Hero",
+  "start_url": "/rabbitmq/en/",
+  "scope": "/rabbitmq/",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#0d1117",
-  "theme_color": "#F97316",
+  "theme_color": "#FF6600",
   "icons": [
     {
-      "src": "/websocket/icon-192.png",
+      "src": "/rabbitmq/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/websocket/icon-512.png",
+      "src": "/rabbitmq/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/websocket/icon-512.png",
+      "src": "/rabbitmq/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
